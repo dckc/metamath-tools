@@ -1,0 +1,16 @@
+;; This config was generated using ensime-config-gen. Feel free to customize its contents manually.
+
+(
+
+:project-name "metamath-tools"
+
+:project-package "com.madmode"
+
+:sources ("./src")
+
+:compile-jars ("./lib")
+
+:target "./target/"
+
+:root-dir "/home/connolly/projects/metamath-tools/"
+)

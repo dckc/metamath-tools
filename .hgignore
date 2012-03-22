@@ -1,0 +1,5 @@
+.cache
+lib/scala-library-2.9.1.jar
+project/project/target/
+project/target/
+target/
