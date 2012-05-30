@@ -1,3 +1,12 @@
+/**
+ * ref:
+ * Metamath
+ * A Computer Language for Pure Mathematics
+ * Norman Megill
+ * http://us.metamath.org/index.html#book
+ * ISBN: 978-1-4116-3724-5
+ * esp. section 4.1 Specification of the Metamath Language
+ */
 package com.madmode.math
 
 import scala.util.parsing.combinator.{Parsers, RegexParsers}
@@ -14,19 +23,7 @@ class MetamathParser extends MetamathLexer {
 
 }
 
-class TestParser extends MetamathLexer {
-  def test_sym(doc: String): Boolean = {
-    parseAll(sym, doc) match {
-      case Success(_, _) => true
-      case _ => false
-    }
-  }
-}
-
 object ExampleApp extends App {
   println("Hello, Metamath Tools.")
-
-  val t1 = new TestParser().test_sym("abc");
-  println("sym test: " + t1)
 }
     
