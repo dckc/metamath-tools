@@ -12,10 +12,11 @@ package com.madmode.math
 import scala.util.parsing.combinator.{ Parsers, RegexParsers }
 
 class Preliminaries extends RegexParsers {
-  /* 4.1.1 Preliminaries */
-  val allowed_range = ascii_printable + ws_char
+  /* WIERD! putting allowed_range before ascii_printable causes it to
+   * get the value "nullnull". */
   val ascii_printable = "\u0021-\u007f"
   val ws_char = " \t\r\n\f"
+  val allowed_range = ascii_printable + ws_char
 
   def tokens = rep(keyword | label | math_symbol)
   def keyword = ( "${" | "$}" | "$c" | "$v" | "$f" | "$e"
@@ -24,21 +25,18 @@ class Preliminaries extends RegexParsers {
 
   def label: Parser[String] = """[A-Za-z0-9\-_\.]+""".r
   def math_symbol: Parser[String] = ("[" + ascii_printable + """&&[^\$]]+""").r
-
 }
 
 class Preprocessing extends Preliminaries {
   /**
-   * "Comments are ignored (treated like white space) for the
-   * purpose of parsing."
+   * Note use of reluctant *?
+   * http://docs.oracle.com/javase/1.4.2/docs/api/java/util/regex/Pattern.html
    */
   override val whiteSpace = (
-    "(?:[" + ws_char + "]|" +
-    comment_start + "(?:[" + allowed_range + "])*?" + comment_end
-    + ")+"
+    "(?:[" + ws_char + "]|(?:" +
+    """\$\(""" + "[" + allowed_range + "]*?" + """\$\)"""
+    + "))+"
   ).r
-  val comment_start = """\$\("""
-  val comment_end = """\$\)"""
 
 
   /**

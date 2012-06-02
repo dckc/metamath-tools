@@ -41,8 +41,6 @@ riage return, line feed, and form feed.""") {
 			       "$d", "$a", "$p", "$.", "$="))
     }
 
-
-
     it("""A label token consists of any combination of
 letters, digits, and the characters hyphen, underscore, and period.""") {
       val l = p.parseAll(p.label, "letters09-_.") match {
@@ -78,28 +76,35 @@ letters, digits, and the characters hyphen, underscore, and period.""") {
   }
 }
 
-class TestParser extends BasicSyntax {
-  def test_file(doc: String): Either[String, (Context, Database)] = {
-    parseAll(database, doc) match {
-      case Success(result, _) => Right(result)
-      case failure : NoSuccess => Left(failure.msg)
+class TestPreprocessing extends Spec with ShouldMatchers {
+  describe("4.1.2 Preprocessing") {
+    val p = new Preprocessing()
+
+    it("""Comments are ignored (treated like white space) for the
+       purpose of parsing."""  ) {
+      val parts1 = p.parseAll(p.tokens,
+			     "$( turnstile $)") match {
+	case p.Success(result, _) => result
+	case failure => failure
+      }
+      parts1 should equal (List())
+
+      val parts = p.parseAll(p.tokens,
+			     "axiom.1 $a $( turnstile $) |- x = x $.") match {
+	case p.Success(result, _) => result
+	case p.NoSuccess(failure, _) => failure
+      }
+      parts should equal (List("axiom.1", "$a", "|-", "x", "=", "x", "$."))
     }
+
+    it("The contents of the file replace the inclusion command.") (pending)
+
   }
 }
 
 
-class ParserTest extends Spec with ShouldMatchers {
-  describe("MetaMath lexer") {
-/*@@@@
-    it("should lex abc as a sym") {
-      new TestLexer().test_sym("abc") should equal ("abc");
-    }
-
-    it("should not allow spaces in symbols") {
-      (new TestLexer().test_sym("ab c") contains "FAILURE") should equal (true);
-    }
-*/
-
+class TestBasicSyntax extends Spec with ShouldMatchers {
+  describe("4.1.3 Basic Syntax") {
     it("should parse a simple example") {
       val bs = new BasicSyntax()
       val ctx1 = Context(List("|-", "="),
