@@ -39,9 +39,6 @@ class Preprocessing extends Preliminaries {
   ).r
 
 
-  /**
-   * TODO: implement file inclusion.
-   */
   def file_inclusion_command = "$[" ~ filename ~ "$]"
   def filename = ("[" + ascii_printable + """&&[^\$]]+""").r
 }
@@ -63,16 +60,10 @@ class BasicSyntax extends Preprocessing with CheckedParser {
     | disjoint_variable_restriction
     | labelled_statement )
 
-  /* TODO: The same math symbol may not occur twice
-   * in a given $v or $c statement. */
-  /* TODO: A constant must be declared in the
-   * outermost block and may not be declared a second time. */
-
   def d0 = Database(List())
   def d1(s: Statement) = Database(List(s))
 
   def declare_constants = "$c" ~> math_symbol .* <~ "$." ^^ { case syms =>
-    /* TODO: if syms intersects ctx.constants or ctx.variables, FAIL. */
     ctx.constants = ctx.constants ++ syms
     d0
   }
@@ -83,7 +74,6 @@ class BasicSyntax extends Preprocessing with CheckedParser {
 
   def disjoint_variable_restriction: Parser[Database] = (
     "$d" ~> rep(active_variable) <~ "$." ^^ {
-      /* TODO: DVRs */
       case _ => d0
     }
   )
@@ -100,7 +90,6 @@ class BasicSyntax extends Preprocessing with CheckedParser {
     }
   }
 
-  /* TODO: consider using Either for errors. */
   def expr: Parser[Either[BadName, Expression]] = (
     variable_type_hypothesis
     | logical_hypothesis
