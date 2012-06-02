@@ -13,12 +13,18 @@ import scala.util.parsing.combinator.{ Parsers, RegexParsers }
 
 class Preliminaries extends RegexParsers {
   /* 4.1.1 Preliminaries */
-  val ws_char_e = "[ \t\r\n\f]"
-  val comment_e = "\\$\\((?:[^\\$]|\\$[^)])*\\$\\)"
+  val allowed_range = ascii_printable + ws_char
+  val ascii_printable = "\u0021-\u007f"
+  val ws_char = " \t\r\n\f"
 
-  def label = "[A-Za-z0-9\\-_\\.]+".r
-  /** math symbol */
-  def sym = "[0-9A-Za-z`~!@#%^&*()\\-_=+\\[\\]{};:'\",\\.<>/?\\\\|]+".r
+  val comment_e = (
+    comment_start + "(?:[" + allowed_range + "])*?" + comment_end
+  )
+  val comment_start = """\$\("""
+  val comment_end = """\$\)"""
+
+  def label: Parser[String] = """[A-Za-z0-9\-_\.]+""".r
+  def math_symbol: Parser[String] = ("[" + ascii_printable + """&&[^\$]]+""").r
 }
 
 class Preprocessing extends Preliminaries {
@@ -26,13 +32,13 @@ class Preprocessing extends Preliminaries {
    * "Comments are ignored (treated like white space) for the
    * purpose of parsing."
    */
-  override val whiteSpace = ("(?:" + ws_char_e + "|" + comment_e + ")+").r
+  override val whiteSpace = ("(?:[" + ws_char + "]|" + comment_e + ")+").r
 
   /**
    * TODO: implement file inclusion.
    */
   def file_inclusion_command = "$[" ~ filename ~ "$]"
-  def filename = sym
+  def filename = ("[" + ascii_printable + """&&[^\$]]+""").r
 }
 
 class BasicSyntax extends Preprocessing with CheckedParser {
@@ -61,13 +67,13 @@ class BasicSyntax extends Preprocessing with CheckedParser {
   def d0 = Database(List())
   def d1(s: Statement) = Database(List(s))
 
-  def declare_constants = "$c" ~> sym .* <~ "$." ^^ { case syms =>
+  def declare_constants = "$c" ~> math_symbol .* <~ "$." ^^ { case syms =>
     /* TODO: if syms intersects ctx.constants or ctx.variables, FAIL. */
     ctx = Context(ctx.constants ++ syms,
 		  ctx.variables, ctx.hypotheses, ctx.statements)
     d0
   }
-  def declare_variables = "$v" ~> sym .* <~ "$." ^^ { case syms =>
+  def declare_variables = "$v" ~> math_symbol .* <~ "$." ^^ { case syms =>
     ctx = Context(ctx.constants, ctx.variables ++ syms,
 		  ctx.hypotheses, ctx.statements)
     d0
@@ -124,16 +130,16 @@ class BasicSyntax extends Preprocessing with CheckedParser {
   }
 
   def active_symbols = rep(active_symbol) ^^ fold_either
-  def active_symbol: Parser[Either[BadSymbol, Symbol]] =  sym ^^ {
+  def active_symbol: Parser[Either[BadSymbol, Symbol]] =  math_symbol ^^ {
     case s if ctx.constants.contains(s) => Right(Con(s))
     case s if ctx.variables.contains(s) => Right(Var(s))
     case oops => Left(BadSymbol(oops))
   }
-  def active_constant = sym ^^ {
+  def active_constant = math_symbol ^^ {
     case s if ctx.constants.contains(s) => Right(Con(s))
     case oops => Left(BadSymbol(oops))
   }
-  def active_variable = sym ^^ {
+  def active_variable = math_symbol ^^ {
     case s if ctx.variables.contains(s) => Right(Var(s))
     case oops => Left(BadSymbol(oops))
   }

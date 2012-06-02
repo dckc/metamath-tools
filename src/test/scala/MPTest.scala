@@ -3,15 +3,33 @@ package com.madmode.math
 import org.scalatest.Spec
 import org.scalatest.matchers.ShouldMatchers
 
-class TestLexer extends Preliminaries {
-  def test_sym(doc: String): String = {
-    parseAll(sym, doc) match {
-      case Success(s, _) => s
-      case failure : NoSuccess => "FAILURE:" + failure.msg
+class TestPreliminaries extends Spec with ShouldMatchers {
+  describe("4.1.1 Preliminaries") {
+    it("""The only characters that are allowed to appear in a Metamath
+source file are the 94 printable characters on standard ascii keyboards ...
+plus the following non-printable (white space) characters: space, tab, car-
+riage return, line feed, and form feed.""") {
+      val p = new Preprocessing()
+
+      val s = p.parseAll(p.label, "$( \u0000 is not allowed $) label") match {
+	case p.Success(txt, _) => txt
+	/* TODO: better diagnostic for bad character. */
+	case p.NoSuccess(failure, _) => "PASS"
+      }
+      s should equal ("PASS")
     }
+    /*
+    it("""A label token consists of any combination of
+letters, digits, and the characters hyphen, underscore, and period.""") {
+    }
+    it("""A math
+symbol token may consist of any combination of the 93 printable standard
+ascii characters other than $ .""")
+    it("""All tokens are case-sensitive.""")
+
+    */
   }
 }
-
 
 class TestParser extends BasicSyntax {
   def test_file(doc: String): Either[String, (Context, Database)] = {
@@ -25,6 +43,7 @@ class TestParser extends BasicSyntax {
 
 class ParserTest extends Spec with ShouldMatchers {
   describe("MetaMath lexer") {
+/*@@@@
     it("should lex abc as a sym") {
       new TestLexer().test_sym("abc") should equal ("abc");
     }
@@ -32,6 +51,7 @@ class ParserTest extends Spec with ShouldMatchers {
     it("should not allow spaces in symbols") {
       (new TestLexer().test_sym("ab c") contains "FAILURE") should equal (true);
     }
+*/
 
     it("should parse a simple example") {
       val bs = new BasicSyntax()
