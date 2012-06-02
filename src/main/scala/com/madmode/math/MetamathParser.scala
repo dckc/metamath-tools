@@ -35,8 +35,138 @@ class Preprocessing extends Preliminaries {
   def filename = sym
 }
 
-class BasicSyntax extends Preprocessing {
-  def database = block
+class BasicSyntax extends Preprocessing with CheckedParser {
+  /* not functional, but HmmImpl.hs seems to use the state monad... */
+  var ctx = Context(List(), List(), Map(), Map())
+  def database = statements ^^ { case db => (ctx, db) }
+
+  def statements: Parser[Database] = (
+    statement ~ statements ^^ {
+      case Database(ss1) ~ Database(ss2) => Database(ss1 ++ ss2) }
+    | success(Database(List()))
+  )
+
+  /* TODO: use commit */
+  def statement: Parser[Database] = (
+    declare_constants
+    | declare_variables 
+    | disjoint_variable_restriction
+    | labelled_statement )
+
+  /* TODO: The same math symbol may not occur twice
+   * in a given $v or $c statement. */
+  /* TODO: A constant must be declared in the
+   * outermost block and may not be declared a second time. */
+
+  def d0 = Database(List())
+  def d1(s: Statement) = Database(List(s))
+
+  def declare_constants = "$c" ~> sym .* <~ "$." ^^ { case syms =>
+    /* TODO: if syms intersects ctx.constants or ctx.variables, FAIL. */
+    ctx = Context(ctx.constants ++ syms,
+		  ctx.variables, ctx.hypotheses, ctx.statements)
+    d0
+  }
+  def declare_variables = "$v" ~> sym .* <~ "$." ^^ { case syms =>
+    ctx = Context(ctx.constants, ctx.variables ++ syms,
+		  ctx.hypotheses, ctx.statements)
+    d0
+  }
+
+  def disjoint_variable_restriction: Parser[Database] = (
+    "$d" ~> rep(active_variable) <~ "$." ^^ {
+      /* TODO: DVRs */
+      case _ => d0
+    }
+  )
+
+  def labelled_statement: Parser[Database] = label ~ expr <~ "$." ^^ {
+    case l ~ Right(e) => d1(Statement(l, e))
+    case oops => {
+      println("" + oops)
+      /* TODO: report error nicely. */
+      d0
+    }
+  }
+
+  /* TODO: consider using Either for errors. */
+  def expr: Parser[Either[BadName, Expression]] = (
+    variable_type_hypothesis
+    | logical_hypothesis
+    | axiom
+    | theorem
+  )
+
+  def variable_type_hypothesis: Parser[Either[BadName, Expression]] = (
+    "$f" ~> active_constant ~ active_variable ^^ {
+      case Right(k) ~ Right(v) => Right(VariableType(k, v))
+      case Left(badsym) ~ _ => Left(badsym)
+      case _ ~ Left(badsym) => Left(badsym)
+    }
+  )
+
+  def logical_hypothesis: Parser[Either[BadName, Expression]] = (
+    "$e" ~> active_constant ~ active_symbols ^^ {
+      case Right(k) ~ Right(expr) => Right(Logical(k, expr))
+      case Left(badsym) ~ _ => Left(badsym)
+      case _ ~ Left(badsym) => Left(badsym)
+    }
+  )
+
+  def fold_either[L, R](ss: List[Either[L, R]]
+		 ): Either[L, List[R]] = ss match {
+    case List() => Right(List())
+    case Left(oops) :: _ => Left(oops)
+    case Right(x) :: xss => fold_either(xss) match {
+      case Right(xs) => Right(x :: xs)
+      case Left(oops) => Left(oops)
+    }
+  }
+
+  def active_symbols = rep(active_symbol) ^^ fold_either
+  def active_symbol: Parser[Either[BadSymbol, Symbol]] =  sym ^^ {
+    case s if ctx.constants.contains(s) => Right(Con(s))
+    case s if ctx.variables.contains(s) => Right(Var(s))
+    case oops => Left(BadSymbol(oops))
+  }
+  def active_constant = sym ^^ {
+    case s if ctx.constants.contains(s) => Right(Con(s))
+    case oops => Left(BadSymbol(oops))
+  }
+  def active_variable = sym ^^ {
+    case s if ctx.variables.contains(s) => Right(Var(s))
+    case oops => Left(BadSymbol(oops))
+  }
+
+
+  def axiom: Parser[Either[BadName, Expression]] = (
+    "$a" ~> active_constant ~ active_symbols ^^ {
+      case Right(k) ~ Right(expr) => Right(Axiom(k, expr))
+      case Left(badsym) ~ _ => Left(badsym)
+      case _ ~ Left(badsym) => Left(badsym)
+    }
+    /* TODO: hypotheses from ctx */
+  )
+
+  def theorem: Parser[Either[BadName, Expression]] = (
+    "$p" ~> active_constant ~ active_symbols ~ ("$=" ~> rep(label)) ^^ {
+      case Right(k) ~ Right(expr) ~ labels => {
+	fold_either(
+	  for (l <- labels) yield (ctx.statements get l) match {
+	    case Some(s) => Right(s)
+	    case _ => Left(BadLabel(l))
+	  }
+	) match {
+	  case Right(pf) => Right(Theorem(k, expr, pf))
+	  case Left(oops) => Left(oops)
+	}
+      }
+      case Left(badsym) ~ _ ~ _ => Left(badsym)
+      case _ ~ Left(badsym) ~ _ => Left(badsym)
+    }
+  )
+
+/*
   def block: Parser[List[Statement]] = (
     statement ~ block ^^ { case s ~ b =>
       s :: b }
@@ -44,67 +174,52 @@ class BasicSyntax extends Preprocessing {
       b1 ++ b2 }
     | success(List())
   )
-
-  def statement: Parser[Statement] = (
-    declare_variables | declare_constants | hypothesis
-    | disjoint_variable_restriction | assertion )
-
-  /* TODO: The same math symbol may not occur twice
-   * in a given $v or $c statement. */
-  /* TODO: A constant must be declared in the
-   * outermost block and may not be declared a second time. */
-
-  def declare_variables = "$v" ~> sym .* <~ "$." ^^ { case syms =>
-    VariableDecl(syms) }
-  def declare_constants = "$c" ~> sym .* <~ "$." ^^ { case syms =>
-    ConstantDecl(syms) }
-
-  def hypothesis = (
-    label ~ (("$f" ~> active_constant ~ active_variable) ^^
-	     { case k ~ v => VariableType(k, v) }
-	     | ("$e" ~> active_constant ~ rep(active_symbol)) ^^
-	     { case k ~ expr => Logical(k, expr) }) <~ "$.") ^^ {
-    case l ~ expr => Indexed(l, expr)
-  }
-
-  def active_symbol = active_constant | active_variable
-  def active_constant = sym /* TODO: active */
-  def active_variable = sym /* TODO: active */
-
-  def disjoint_variable_restriction = "$d" ~> rep(active_variable) <~ "$." ^^ {
-    DisjoinVariables(_) }
-
-  def assertion = (
-    label ~ (("$a" ~> active_constant ~ rep(active_symbol)) ^^
-	     { case k ~ expr => Axiom(k, expr) }
-	     | ("$p" ~> active_constant ~ rep(active_symbol)
-		~ "$=" ~ rep(label)) ^^
-	     { case k ~ expr ~ "$=" ~ pf =>
-	       Theorem(k, expr, pf) }) <~ "$.") ^^ {
-    case l ~ expr => Indexed(l, expr)
-  }
+*/
 
   /* TODO: A $f, $e, or $d statement is active from ... */
 }
 
+trait CheckedParser extends Parsers {
+  /**
+   * checked wraps a Parser[T] with a check on its results
+   */
+  def checked[T](p: => Parser[T])(
+    check: (T, Input) => ParseResult[T]): Parser[T] = Parser {
+      in => p(in) match {
+	case s @ Success(x, in) => check(x, in)
+	case ns => ns
+      }
+    }
+}
 
-sealed abstract class Statement
 
-sealed abstract class Declaration extends Statement
-case class VariableDecl(symbols: List[String]) extends Declaration
-case class ConstantDecl(symbols: List[String]) extends Declaration
-case class DisjoinVariables(symbols: List[String]) extends Declaration
+/* ack: HmmImpl.hs */
+case class Database(statements: List[Statement])
 
-case class Indexed(label: String, expr: Expression) extends Statement
+case class Context(constants: List[String],
+		   variables: List[String],
+		   /* dvrs: List[DisjointVariables], TODO: refine */
+		   hypotheses: Map[String, Hypothesis],
+		   statements: Map[String, Statement])
+
+sealed abstract class Symbol
+case class Var(sym: String) extends Symbol
+case class Con(sym: String) extends Symbol
+
+sealed abstract class BadName
+case class BadSymbol(sym: String) extends BadName
+case class BadLabel(label: String) extends BadName
+
+case class Statement(label: String, expr: Expression)
 
 sealed abstract class Expression
 sealed abstract class Hypothesis extends Expression
-case class VariableType(c: String, t: String) extends Hypothesis
-case class Logical(mark: String, symbols: List[String]) extends Hypothesis
-case class Axiom(mark: String, symbols: List[String]) extends Expression
+case class VariableType(t: Con, v: Var) extends Hypothesis
+case class Logical(mark: Con, symbols: List[Symbol]) extends Hypothesis
+case class Axiom(mark: Con, symbols: List[Symbol]) extends Expression
 /* TODO: inference, i.e. with hypotheses. */
-case class Theorem(mark: String, symbols: List[String], proof: List[String]
-		 ) extends Expression
+case class Theorem(mark: Con, symbols: List[Symbol],
+		   proof: List[Statement]) extends Expression
 
 
 object ExampleApp extends App {
