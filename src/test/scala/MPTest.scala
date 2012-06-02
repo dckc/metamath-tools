@@ -105,31 +105,57 @@ class TestPreprocessing extends Spec with ShouldMatchers {
 
 class TestBasicSyntax extends Spec with ShouldMatchers {
   describe("4.1.3 Basic Syntax") {
-    it("should parse a simple example") {
+    it("""After preprocessing, a database will consist of a sequence
+       of statements.  """) {
       val bs = new BasicSyntax()
-      val ctx1 = Context(List("|-", "="),
-			 List("x"), Map(), Map())
-      bs.ctx = ctx1
-      val s = bs.parseAll(bs.statement, "axiom.1 $a |- x = x $.") match {
-	case bs.Success(Database(List(s)), _) => s
+      bs.ctx.constants = List("|-", "=")
+      bs.ctx.variables = List("x")
+      val db = bs.parseAll(bs.statements, "axiom.1 $a |- x = x $.") match {
+	case bs.Success(db, _) => db
 	case other => other
       }
-      s should equal (
-	Statement("axiom.1",
-			     Axiom(Con("|-"),
-				   List(Var("x"), Con("="), Var("x")))) )
+      db should equal (
+	Database(List(Statement("axiom.1",
+				Axiom(Con("|-"),
+				      List(Var("x"), Con("="), Var("x")))))) )
     }
 
-    it("should parse a larger example") {
+    it("${ begins a block and a matching $} ends the block.") (pending)
+
+    it("""These statements declare the math symbols to be variables
+       or constants respectively.""") {
       val bs = new BasicSyntax()
-      val stmts = (bs.parseAll(bs.database, """
-$c wff set |- ( ) -> $.
-$v P Q x $.
-stmt1 $f wff P $.
-stmt2 $f set x $.
-stmt3 $e |- ( P -> Q ) $.
-"""
-			     )) match {
+      val ctx = bs.parseAll(bs.database, """
+			    $c wff set |- ( ) -> $.
+			    $v P Q x $.""") match {
+	case bs.Success((ctx, Database(List())), _) => 
+	  (ctx.constants, ctx.variables)
+	case other => other
+      }
+      ctx should equal ( (List("wff", "set", "|-", "(", ")", "->"),
+			  List("P", "Q", "x") ))
+    }
+
+    it("""A math symbol becomes active when declared and stays active
+       until the end of the block in which it is declared.""") (pending)
+
+    it("""A variable may not be declared a second time while it is
+       active, but it may be declared again (as a variable, but not as
+       a constant) after it becomes inactive.""") (pending)
+
+    it("""A constant must be declared in the outermost block and may
+       not be declared a second time""") (pending)
+
+    it("A hypothesis is a $f or $e statement.") {
+      val bs = new BasicSyntax()
+      val stmts = bs.parseAll(bs.database, """
+			      $c wff set |- ( ) -> $.
+			      $v P Q x $.
+			      stmt1 $f wff P $.
+			      stmt2 $f set x $.
+			      stmt3 $e |- ( P -> Q ) $.
+			      """
+			     ) match {
 	case bs.Success((ctx, Database(stmts)), _) => stmts
 	case other => other
       }
@@ -141,6 +167,46 @@ stmt3 $e |- ( P -> Q ) $.
 					     Con("->"), Var("Q"),
 					     Con(")"))))
 	   ) )
+    }
+
+    it("""A $d statement is also called a disjoint (or distinct)
+       variable restriction.""") (pending)
+
+    it("""An assertion is a $a or $p statement.""") {
+      val bs = new BasicSyntax()
+      val stmts = bs.parseAll(bs.database, """
+			      $c ( ) -> wff $.
+			      $v p q r s $.
+			      wp $f wff p $.
+			      wq $f wff q $.
+			      wr $f wff r $.
+			      ws $f wff s $.
+			      w2 $a wff ( p -> q ) $.
+			      wnew $p wff ( s -> ( r -> p ) )
+			           $= ws wr wp w2 w2 $.
+			      """
+			     ) match {
+	case bs.Success((ctx, Database(stmts)), _) => stmts
+	case other => other
+      }
+      val wp = Statement("wp",VariableType(Con("wff"),Var("p")))
+      val wq = Statement("wq",VariableType(Con("wff"),Var("q")))
+      val wr = Statement("wr",VariableType(Con("wff"),Var("r")))
+      val ws = Statement("ws",VariableType(Con("wff"),Var("s")))
+      val w2 = Statement("w2",
+			 Axiom(Con("wff"),
+			       List(Con("("),
+				    Var("p"), Con("->"), Var("q"),
+				    Con(")"))))
+      val wnew = Statement("wnew",
+			   Theorem(Con("wff"),
+				   List(Con("("),
+					Var("s"), Con("->"), Con("("),
+					Var("r"), Con("->"), Var("p"),
+					Con(")"), Con(")")),
+				   List(ws, wr, wp, w2, w2)))
+      stmts should equal (List(wp, wq, wr, ws, w2, wnew))
+
     }
 
   }
