@@ -17,14 +17,14 @@ class Preliminaries extends RegexParsers {
   val ascii_printable = "\u0021-\u007f"
   val ws_char = " \t\r\n\f"
 
-  val comment_e = (
-    comment_start + "(?:[" + allowed_range + "])*?" + comment_end
-  )
-  val comment_start = """\$\("""
-  val comment_end = """\$\)"""
+  def tokens = rep(keyword | label | math_symbol)
+  def keyword = ( "${" | "$}" | "$c" | "$v" | "$f" | "$e"
+		 | "$d" | "$a" | "$p" | "$." | "$="
+		 | "$(" | "$)" | "$[" | "$]" )
 
   def label: Parser[String] = """[A-Za-z0-9\-_\.]+""".r
   def math_symbol: Parser[String] = ("[" + ascii_printable + """&&[^\$]]+""").r
+
 }
 
 class Preprocessing extends Preliminaries {
@@ -32,7 +32,14 @@ class Preprocessing extends Preliminaries {
    * "Comments are ignored (treated like white space) for the
    * purpose of parsing."
    */
-  override val whiteSpace = ("(?:[" + ws_char + "]|" + comment_e + ")+").r
+  override val whiteSpace = (
+    "(?:[" + ws_char + "]|" +
+    comment_start + "(?:[" + allowed_range + "])*?" + comment_end
+    + ")+"
+  ).r
+  val comment_start = """\$\("""
+  val comment_end = """\$\)"""
+
 
   /**
    * TODO: implement file inclusion.

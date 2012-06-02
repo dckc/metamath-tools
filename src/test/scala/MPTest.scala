@@ -5,29 +5,76 @@ import org.scalatest.matchers.ShouldMatchers
 
 class TestPreliminaries extends Spec with ShouldMatchers {
   describe("4.1.1 Preliminaries") {
+    val p = new Preprocessing()
+
     it("""The only characters that are allowed to appear in a Metamath
 source file are the 94 printable characters on standard ascii keyboards ...
 plus the following non-printable (white space) characters: space, tab, car-
 riage return, line feed, and form feed.""") {
-      val p = new Preprocessing()
 
       val s = p.parseAll(p.label, "$( \u0000 is not allowed $) label") match {
 	case p.Success(txt, _) => txt
 	/* TODO: better diagnostic for bad character. */
-	case p.NoSuccess(failure, _) => "PASS"
+	case p.NoSuccess(failure, _) => "BAD CHAR"
       }
-      s should equal ("PASS")
+      s should equal ("BAD CHAR")
     }
-    /*
+
+    it("""A Metamath database consists of a sequence of three kinds of tokens
+       separated by white space.""") {
+      val parts = p.parseAll(p.tokens, "axiom.1 $a |- x = x $.") match {
+	case p.Success(result, _) => result
+	case p.NoSuccess(failure, _) => failure
+      }
+      parts should equal (List("axiom.1", "$a", "|-", "x", "=", "x", "$."))
+    }
+
+    it("""The set of keyword tokens is ${, $}, $c, $v, $f, $e, $d, $a,
+       $p, $., $=, $(, $), $[, and $]. The last four are called
+       auxiliary or preprocessing keywords. """) {
+      val parts = p.parseAll(p.tokens,
+			      "${ $} $c $v $f $e $d $a $p $. $=") match {
+	case p.Success(result, _) => result
+	case p.NoSuccess(failure, _) => failure
+      }
+      parts should equal (List("${", "$}", "$c", "$v", "$f", "$e",
+			       "$d", "$a", "$p", "$.", "$="))
+    }
+
+
+
     it("""A label token consists of any combination of
 letters, digits, and the characters hyphen, underscore, and period.""") {
-    }
-    it("""A math
-symbol token may consist of any combination of the 93 printable standard
-ascii characters other than $ .""")
-    it("""All tokens are case-sensitive.""")
+      val l = p.parseAll(p.label, "letters09-_.") match {
+	case p.Success(txt, _) => txt
+	case p.NoSuccess(failure, _) => failure
+      }
+      l should equal ("letters09-_.")
 
-    */
+      val notl = p.parseAll(p.label, "letter$") match {
+	case p.Success(txt, _) => txt
+	case p.NoSuccess(failure, _) => "NOT LABEL"
+      }
+      notl should equal ("NOT LABEL")
+    }
+
+    it("""A math symbol token may consist of any combination of the 93
+          printable standard ascii characters other than $ .""") {
+      val sym = p.parseAll(p.math_symbol, "|-") match {
+	case p.Success(txt, _) => txt
+	case p.NoSuccess(failure, _) => failure
+      }
+      sym should equal ("|-")
+    }
+
+    it("""All tokens are case-sensitive.""") {
+      val sym = p.parseAll(p.math_symbol, "case-SENSITIVE") match {
+	case p.Success(txt, _) => txt
+	case p.NoSuccess(failure, _) => failure
+      }
+      sym should equal ("case-SENSITIVE")
+    }
+
   }
 }
 
