@@ -120,7 +120,15 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
 				      List(Var("x"), Con("="), Var("x")))))) )
     }
 
-    it("${ begins a block and a matching $} ends the block.") (pending)
+    it("${ begins a block and a matching $} ends the block.") {
+      val bs = new BasicSyntax()
+      val db = bs.parseAll(bs.statements, "${ $} ${ ${ $} $}") match {
+	case bs.Success(db, _) => db
+	case other => other
+      }
+      db should equal (
+	Database(List()) )
+    }
 
     it("""These statements declare the math symbols to be variables
        or constants respectively.""") {

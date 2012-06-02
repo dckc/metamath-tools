@@ -50,18 +50,32 @@ class BasicSyntax extends Preprocessing with CheckedParser {
   def statements: Parser[Database] = (
     statement ~ statements ^^ {
       case Database(ss1) ~ Database(ss2) => Database(ss1 ++ ss2) }
-    | success(Database(List()))
+    | success(d0)
   )
 
   /* TODO: use commit */
   def statement: Parser[Database] = (
-    declare_constants
+    block
+    | declare_constants
     | declare_variables 
     | disjoint_variable_restriction
     | labelled_statement )
 
   def d0 = Database(List())
   def d1(s: Statement) = Database(List(s))
+
+  def block = block_start ~ statements <~ "$}" ^^ {
+    case save_ctx ~ Database(statements) => {
+      val assertions = statements filter {
+	case Statement(_, a: Assertion) => true
+	case _ => false
+      }
+      ctx.statements = save_ctx.statements ++ (
+	assertions map {_.label} zip assertions)
+      Database(assertions)
+    }
+  }
+  def block_start = "${" ^^ { case kw => ctx.clone() }
 
   def declare_constants = "$c" ~> math_symbol .* <~ "$." ^^ { case syms =>
     ctx.constants = ctx.constants ++ syms
@@ -165,18 +179,6 @@ class BasicSyntax extends Preprocessing with CheckedParser {
       case _ ~ Left(badsym) ~ _ => Left(badsym)
     }
   )
-
-/*
-  def block: Parser[List[Statement]] = (
-    statement ~ block ^^ { case s ~ b =>
-      s :: b }
-    | ("${" ~> block <~ "$}") ~ block ^^ { case b1 ~ b2 =>
-      b1 ++ b2 }
-    | success(List())
-  )
-*/
-
-  /* TODO: A $f, $e, or $d statement is active from ... */
 }
 
 trait CheckedParser extends Parsers {
@@ -203,7 +205,9 @@ case class Context(var constants: List[String],
 		   var variables: List[String],
 		   /* dvrs: List[DisjointVariables], TODO: refine */
 		   var hypotheses: Map[String, Hypothesis],
-		   var statements: Map[String, Statement])
+		   var statements: Map[String, Statement]) {
+  override def clone() = Context(constants, variables, hypotheses, statements)
+}
 
 sealed abstract class Symbol
 case class Var(n: String) extends Symbol
@@ -234,12 +238,15 @@ case class VariableType(t: Con, v: Var) extends Hypothesis {
 case class Logical(mark: Con, symbols: List[Symbol]) extends Hypothesis {
   override def toString = format("$e", mark :: symbols)
 }
-case class Axiom(mark: Con, symbols: List[Symbol]) extends Expression {
+
+sealed abstract class Assertion extends Expression
+
+case class Axiom(mark: Con, symbols: List[Symbol]) extends Assertion {
   override def toString = format("$a", mark :: symbols)
 }
 /* TODO: inference, i.e. with hypotheses. */
 case class Theorem(mark: Con, symbols: List[Symbol],
-		   proof: List[Statement]) extends Expression {
+		   proof: List[Statement]) extends Assertion {
   override def toString = format("$p", mark :: symbols) + "\n$= " + (
     proof map { _.label } mkString " " )
 }
@@ -256,9 +263,16 @@ object ExampleApp extends App {
     val fis = new java.io.FileInputStream(infn)
     val isr = new java.io.InputStreamReader(fis)
     val bs = new BasicSyntax()
-    val ctx, db = bs.parseAll(bs.database, isr)
-    println("Context: " + ctx)
-    println("Database: " + db)
+    bs.parseAll(bs.database, isr) match {
+      case bs.Success((ctx, db), _) => {
+	println("Context: " + ctx)
+	println("Database: " + db)
+      }
+      case bs.NoSuccess(failure, rest) => {
+	println(failure)
+	println("Context: " + bs.ctx)
+      }
+    }
   }
 }
 
