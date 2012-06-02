@@ -47,8 +47,7 @@ class Preprocessing extends Preliminaries {
 }
 
 class BasicSyntax extends Preprocessing with CheckedParser {
-  /* not functional, but HmmImpl.hs seems to use the state monad... */
-  var ctx = Context(List(), List(), Map(), Map())
+  val ctx = Context(List(), List(), Map(), Map())
   def database = statements ^^ { case db => (ctx, db) }
 
   def statements: Parser[Database] = (
@@ -74,13 +73,11 @@ class BasicSyntax extends Preprocessing with CheckedParser {
 
   def declare_constants = "$c" ~> math_symbol .* <~ "$." ^^ { case syms =>
     /* TODO: if syms intersects ctx.constants or ctx.variables, FAIL. */
-    ctx = Context(ctx.constants ++ syms,
-		  ctx.variables, ctx.hypotheses, ctx.statements)
+    ctx.constants = ctx.constants ++ syms
     d0
   }
   def declare_variables = "$v" ~> math_symbol .* <~ "$." ^^ { case syms =>
-    ctx = Context(ctx.constants, ctx.variables ++ syms,
-		  ctx.hypotheses, ctx.statements)
+    ctx.variables = ctx.variables ++ syms
     d0
   }
 
@@ -92,7 +89,10 @@ class BasicSyntax extends Preprocessing with CheckedParser {
   )
 
   def labelled_statement: Parser[Database] = label ~ expr <~ "$." ^^ {
-    case l ~ Right(e) => d1(Statement(l, e))
+    case l ~ Right(e) => {
+      ctx.statements = ctx.statements + (l -> Statement(l, e))
+      d1(Statement(l, e))
+    }
     case oops => {
       println("" + oops)
       /* TODO: report error nicely. */
@@ -207,11 +207,14 @@ trait CheckedParser extends Parsers {
 /* ack: HmmImpl.hs */
 case class Database(statements: List[Statement])
 
-case class Context(constants: List[String],
-		   variables: List[String],
+/**
+ * not functional, but HmmImpl.hs seems to use the state monad...
+ */
+case class Context(var constants: List[String],
+		   var variables: List[String],
 		   /* dvrs: List[DisjointVariables], TODO: refine */
-		   hypotheses: Map[String, Hypothesis],
-		   statements: Map[String, Statement])
+		   var hypotheses: Map[String, Hypothesis],
+		   var statements: Map[String, Statement])
 
 sealed abstract class Symbol
 case class Var(sym: String) extends Symbol
