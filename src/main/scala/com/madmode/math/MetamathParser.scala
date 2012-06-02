@@ -217,26 +217,59 @@ case class Context(var constants: List[String],
 		   var statements: Map[String, Statement])
 
 sealed abstract class Symbol
-case class Var(sym: String) extends Symbol
-case class Con(sym: String) extends Symbol
+case class Var(n: String) extends Symbol
+case class Con(s: String) extends Symbol
 
 sealed abstract class BadName
 case class BadSymbol(sym: String) extends BadName
 case class BadLabel(label: String) extends BadName
 
-case class Statement(label: String, expr: Expression)
+case class Statement(label: String, expr: Expression) {
+  override def toString = label + " " + expr.toString() + " $.\n"
+}
 
-sealed abstract class Expression
+sealed abstract class Expression {
+  def format(kw: String, expr: List[Symbol]) = {
+    (List(kw) ++ (expr map {
+      case Var(n) => n
+      case Con(s) => s
+    })) mkString " "
+  }
+}
+
 sealed abstract class Hypothesis extends Expression
-case class VariableType(t: Con, v: Var) extends Hypothesis
-case class Logical(mark: Con, symbols: List[Symbol]) extends Hypothesis
-case class Axiom(mark: Con, symbols: List[Symbol]) extends Expression
+case class VariableType(t: Con, v: Var) extends Hypothesis {
+  override def toString() = format("$f", List(t, v))
+}
+
+case class Logical(mark: Con, symbols: List[Symbol]) extends Hypothesis {
+  override def toString = format("$e", mark :: symbols)
+}
+case class Axiom(mark: Con, symbols: List[Symbol]) extends Expression {
+  override def toString = format("$a", mark :: symbols)
+}
 /* TODO: inference, i.e. with hypotheses. */
 case class Theorem(mark: Con, symbols: List[Symbol],
-		   proof: List[Statement]) extends Expression
+		   proof: List[Statement]) extends Expression {
+  override def toString = format("$p", mark :: symbols) + "\n$= " + (
+    proof map { _.label } mkString " " )
+}
 
 
 object ExampleApp extends App {
-  println("Hello, Metamath Tools.")
+  override def main(args: Array[String]) {
+    if (args.length != 2) {
+      println("Usage: parser input_file")
+      return
+    }
+
+    val infn = args(1)
+    val fis = new java.io.FileInputStream(infn)
+    val isr = new java.io.InputStreamReader(fis)
+    val bs = new BasicSyntax()
+    val ctx, db = bs.parseAll(bs.database, isr)
+    println("Context: " + ctx)
+    println("Database: " + db)
+  }
 }
 
