@@ -9,7 +9,7 @@
  */
 package com.madmode.math
 
-import scala.util.parsing.combinator.{ Parsers, RegexParsers }
+import scala.util.parsing.combinator.{ Parsers, RegexParsers, PackratParsers }
 import scala.collection.immutable.PagedSeq
 import scala.util.parsing.input.{PagedSeqReader}
 import java.io.{InputStreamReader,FileInputStream}
@@ -42,22 +42,43 @@ class Preprocessing extends Preliminaries {
   ).r
 
 
-  def file_inclusion_command = "$[" ~ filename ~ "$]"
+  def file_inclusion_command = "$[" ~! filename ~! "$]"
   def filename = ("[" + ascii_printable + """&&[^\$]]+""").r
 }
 
-class BasicSyntax extends Preprocessing with CheckedParser {
+class BasicSyntax extends Preprocessing with PackratParsers {
   val ctx = Context(List(), List(), Map(), Map(), true)
   def database = statements ^^ { case db => (ctx, db) }
 
-  def statements: Parser[Database] = (
-    statement ~ statements ^^ {
-      case Database(ss1) ~ Database(ss2) => Database(ss1 ++ ss2) }
+  /**
+   * for testing...
+   */
+  lazy val statements_lex: Parser[List[List[String]]] = rep(statement_lex)
+  lazy val statement_lex: Parser[List[String]] = (
+    "${" ^^ { case kw => List(kw) }
+    | "$}" ^^ { case kw => List(kw) }
+    | ( opt(label) ~! ("$c" | "$v" | "$f" | "$e" | "$d" | "$a" | "$p")
+       ~! rep(math_symbol) ~! proof_lex ~! st_end) ^^ {
+	 case lopt ~ kw ~ syms ~ pf_opt ~ end => {
+	   val tokens = (List() ++ lopt ++ List(kw) ++ syms
+	    ++ pf_opt ++ List(end))
+	   tokens
+	 }
+       }
+  )
+  lazy val proof_lex = opt("$=" ~ rep (label | "(" | ")")) ^^ {
+    case Some(kwp ~ pf_steps) => List(kwp) ++ pf_steps
+    case None => List()
+  }
+
+  lazy val statements: Parser[Database] = (
+    statement ~! statements ^^ {
+      case Database(ss1) ~ Database(ss2) =>
+	Database(ss1 ++ ss2) }
     | success(d0)
   )
 
-  /* TODO: use commit */
-  def statement: Parser[Database] = (
+  lazy val statement: Parser[Database] = (
     block
     | declare_constants
     | declare_variables 
@@ -67,7 +88,7 @@ class BasicSyntax extends Preprocessing with CheckedParser {
   def d0 = Database(List())
   def d1(s: Statement) = Database(List(s))
 
-  def block = block_start ~ statements <~ "$}" ^^ {
+  lazy val block = block_start ~! statements <~ "$}" ^^ {
     case save_ctx ~ Database(statements) => {
       val assertions = statements filter {
 	case Statement(_, a: Assertion) => true
@@ -80,53 +101,51 @@ class BasicSyntax extends Preprocessing with CheckedParser {
   }
   def block_start = "${" ^^ { case kw => ctx.push() }
 
-  def declare_constants = "$c" ~> math_symbol .* <~ "$." ^^ { case syms =>
-    ctx.constants = ctx.constants ++ syms
-    d0
-  }
-  def declare_variables = "$v" ~> math_symbol .* <~ "$." ^^ { case syms =>
-    ctx.variables = ctx.variables ++ syms
-    d0
-  }
+  lazy val st_end = commit("$.")
 
-  def disjoint_variable_restriction: Parser[Database] = (
-    "$d" ~> rep(active_variable) <~ "$." ^^ {
-      case _ => d0
+  lazy val declare_constants = "$c" ~> math_symbol .* <~ st_end ^^ {
+    case syms => {
+      ctx.constants = ctx.constants ++ syms
+      d0
     }
-  )
-
-  def labelled_statement: Parser[Database] = label ~ expr <~ "$." ^^ {
-    case l ~ Right(e) => {
-      ctx.statements = ctx.statements + (l -> Statement(l, e))
-      d1(Statement(l, e))
-    }
-    case oops => {
-      println("" + oops)
-      /* TODO: report error nicely. */
+  }
+  lazy val declare_variables = "$v" ~> math_symbol .* <~ st_end ^^ {
+    case syms => {
+      ctx.variables = ctx.variables ++ syms
       d0
     }
   }
 
-  def expr: Parser[Either[BadName, Expression]] = (
+  lazy val disjoint_variable_restriction: Parser[Database] = (
+    "$d" ~> rep(active_variable) <~ st_end ^^ {
+      case _ => d0
+    }
+  )
+
+  lazy val labelled_statement: Parser[Database] =
+    label ~! expr <~ st_end ^^ {
+      case l ~ e => {
+	ctx.statements = ctx.statements + (l -> Statement(l, e))
+	d1(Statement(l, e))
+      }
+    }
+
+  lazy val expr: Parser[Expression] = (
     variable_type_hypothesis
     | logical_hypothesis
     | axiom
     | theorem
   )
 
-  def variable_type_hypothesis: Parser[Either[BadName, Expression]] = (
-    "$f" ~> active_constant ~ active_variable ^^ {
-      case Right(k) ~ Right(v) => Right(VariableType(k, v))
-      case Left(badsym) ~ _ => Left(badsym)
-      case _ ~ Left(badsym) => Left(badsym)
+  lazy val variable_type_hypothesis: Parser[Expression] = (
+    "$f" ~> active_constant ~ active_variable ^? {
+      case Right(k) ~ Right(v) => VariableType(k, v)
     }
   )
 
-  def logical_hypothesis: Parser[Either[BadName, Expression]] = (
-    "$e" ~> active_constant ~ active_symbols ^^ {
-      case Right(k) ~ Right(expr) => Right(Logical(k, expr))
-      case Left(badsym) ~ _ => Left(badsym)
-      case _ ~ Left(badsym) => Left(badsym)
+  lazy val logical_hypothesis: Parser[Expression] = (
+    "$e" ~> active_constant ~ active_symbols ^? {
+      case Right(k) ~ Right(expr) => Logical(k, expr)
     }
   )
 
@@ -156,54 +175,36 @@ class BasicSyntax extends Preprocessing with CheckedParser {
   }
 
 
-  def axiom: Parser[Either[BadName, Expression]] = (
-    "$a" ~> active_constant ~ active_symbols ^^ {
-      case Right(k) ~ Right(expr) => Right(Axiom(k, expr))
-      case Left(badsym) ~ _ => Left(badsym)
-      case _ ~ Left(badsym) => Left(badsym)
+  lazy val axiom: Parser[Expression] = (
+    "$a" ~> active_constant ~ active_symbols ^? {
+      case Right(k) ~ Right(expr) => Axiom(k, expr)
     }
     /* TODO: hypotheses from ctx */
   )
 
-  def theorem: Parser[Either[BadName, Expression]] = (
-    "$p" ~> active_constant ~ active_symbols ~ ("$=" ~> proof_steps) ^^ {
+  lazy val theorem: Parser[Expression] = (
+    "$p" ~> active_constant ~ active_symbols ~ ("$=" ~> proof_steps) ^? {
       case Right(k) ~ Right(expr) ~ Right(proof_steps) => {
-	Right(Theorem(k, expr, proof_steps))
+	Theorem(k, expr, proof_steps)
       }
-      case Left(badsym) ~ _ ~ _ => Left(badsym)
-      case _ ~ Left(badsym) ~ _ => Left(badsym)
-      case _ ~ _ ~ Left(oops) => Left(oops)
     }
   )
-  def proof_steps = (
+  def proof_steps: Parser[Either[BadName, List[Statement]]] = (
     rep1(label) ^^ {
       case labels =>
 	fold_either(
 	  for (l <- labels) yield (ctx.statements get l) match {
 	    case Some(s) => Right(s)
-	    case _ => Left(BadLabel(l))
+	    case None => Left(BadLabel(l))
 	  }
 	)
     }
     /* TODO: compressed proofs */
-    | ("(" ~> rep(label) <~ ")") ~ "[A-Z ]+".r ^^ { case labels ~ digits =>
-      Right(List()) }
+    | ("(" ~> rep(label) <~ ")") ~ proof_step_indexes ^^ {
+      case labels ~ digits => Right(List()) }
   )
+  def proof_step_indexes = """[A-Z \t\r\f\n]+""".r
 }
-
-trait CheckedParser extends Parsers {
-  /**
-   * checked wraps a Parser[T] with a check on its results
-   */
-  def checked[T](p: => Parser[T])(
-    check: (T, Input) => ParseResult[T]): Parser[T] = Parser {
-      in => p(in) match {
-	case s @ Success(x, in) => check(x, in)
-	case ns => ns
-      }
-    }
-}
-
 
 /* ack: HmmImpl.hs */
 case class Database(statements: List[Statement])
@@ -268,10 +269,7 @@ object Utility extends App {
   def reader(filename: String) = {
     val bytes_in = new FileInputStream(filename)
     val chars_in = new InputStreamReader(bytes_in)
-    def more(buf: Array[Char], start: Int, end: Int): Int = {
-      chars_in.read(buf, start, end)
-    }
-    new PagedSeqReader(new PagedSeq(more))
+    chars_in
   }
 
   override def main(args: Array[String]) {
@@ -282,6 +280,19 @@ object Utility extends App {
 
     val infn = args(1)
     val bs = new BasicSyntax()
+
+    println("tokenize:")
+    bs.parseAll(bs.statements_lex, reader(infn)) match {
+      case bs.Success(stmts, _) => {
+	println("statements: " + stmts.length)
+      }
+      case bs.NoSuccess(failure, rest) => {
+	println(failure)
+	println(rest.pos)
+      }
+    }
+
+    println("parse:")
     bs.parseAll(bs.database, reader(infn)) match {
       case bs.Success((ctx, db), _) => {
 	println("Context constants: " + ctx.constants.length)
@@ -293,7 +304,6 @@ object Utility extends App {
       case bs.NoSuccess(failure, rest) => {
 	println(failure)
 	println(rest.pos)
-	println("Context: " + bs.ctx)
       }
     }
   }
