@@ -46,19 +46,19 @@ class Preprocessing extends Preliminaries {
   def filename = ("[" + ascii_printable + """&&[^\$]]+""").r
 }
 
-class BasicSyntax extends Preprocessing with PackratParsers {
+class BasicSyntax extends Preprocessing {
   val ctx = Context(List(), List(), Map(), Map(), true)
   def database = statements ^^ { case db => (ctx, db) }
 
   /**
    * for testing...
    */
-  lazy val statements_lex: Parser[List[List[String]]] = rep(statement_lex)
-  lazy val statement_lex: Parser[List[String]] = (
+  def statements_lex: Parser[List[List[String]]] = rep(statement_lex)
+  def statement_lex: Parser[List[String]] = (
     "${" ^^ { case kw => List(kw) }
     | "$}" ^^ { case kw => List(kw) }
     | ( opt(label) ~! ("$c" | "$v" | "$f" | "$e" | "$d" | "$a" | "$p")
-       ~! rep(math_symbol) ~! proof_lex ~! st_end) ^^ {
+       ~! rep(math_symbol) ~! proof_lex ~! "$.") ^^ {
 	 case lopt ~ kw ~ syms ~ pf_opt ~ end => {
 	   val tokens = (List() ++ lopt ++ List(kw) ++ syms
 	    ++ pf_opt ++ List(end))
@@ -66,29 +66,31 @@ class BasicSyntax extends Preprocessing with PackratParsers {
 	 }
        }
   )
-  lazy val proof_lex = opt("$=" ~ rep (label | "(" | ")")) ^^ {
+  def proof_lex = opt("$=" ~ rep (label | "(" | ")")) ^^ {
     case Some(kwp ~ pf_steps) => List(kwp) ++ pf_steps
     case None => List()
   }
 
-  lazy val statements: Parser[Database] = (
+  def statements: Parser[Database] = (
     statement ~! statements ^^ {
       case Database(ss1) ~ Database(ss2) =>
 	Database(ss1 ++ ss2) }
     | success(d0)
   )
 
-  lazy val statement: Parser[Database] = (
+  def statement: Parser[Database] = (
     block
-    | declare_constants
-    | declare_variables 
-    | disjoint_variable_restriction
-    | labelled_statement )
+    | ( "$c" ~! commit(declare_constants)
+       | "$v" ~! commit(declare_variables)
+       | "$d" ~! commit(disjoint_variable_restriction)
+    ) ^^ { case kw ~ decl => decl }
+    | labelled_statement
+  )
 
   def d0 = Database(List())
   def d1(s: Statement) = Database(List(s))
 
-  lazy val block = block_start ~! statements <~ "$}" ^^ {
+  def block = block_start ~! statements <~ "$}" ^^ {
     case save_ctx ~ Database(statements) => {
       val assertions = statements filter {
 	case Statement(_, a: Assertion) => true
@@ -101,52 +103,57 @@ class BasicSyntax extends Preprocessing with PackratParsers {
   }
   def block_start = "${" ^^ { case kw => ctx.push() }
 
-  lazy val st_end = commit("$.")
-
-  lazy val declare_constants = "$c" ~> math_symbol .* <~ st_end ^^ {
+  def declare_constants = math_symbol .* <~ "$." ^^ {
     case syms => {
       ctx.constants = ctx.constants ++ syms
       d0
     }
   }
-  lazy val declare_variables = "$v" ~> math_symbol .* <~ st_end ^^ {
+  def declare_variables = math_symbol .* <~ "$." ^^ {
     case syms => {
       ctx.variables = ctx.variables ++ syms
       d0
     }
   }
 
-  lazy val disjoint_variable_restriction: Parser[Database] = (
-    "$d" ~> rep(active_variable) <~ st_end ^^ {
+  def disjoint_variable_restriction: Parser[Database] = (
+    rep(active_variable) <~ "$." ^^ {
       case _ => d0
     }
   )
 
-  lazy val labelled_statement: Parser[Database] =
-    label ~! expr <~ st_end ^^ {
-      case l ~ e => {
-	ctx.statements = ctx.statements + (l -> Statement(l, e))
-	d1(Statement(l, e))
+  def labelled_statement: Parser[Database] =
+    label ~! expr ~! "$." ^^ {
+      case l ~ e ~ stmt_end => {
+	val stmt = Statement(l, e)
+	ctx.statements = ctx.statements + (l -> stmt)
+	d1(stmt)
       }
     }
 
-  lazy val expr: Parser[Expression] = (
-    variable_type_hypothesis
-    | logical_hypothesis
-    | axiom
-    | theorem
-  )
+  def expr: Parser[Expression] = (
+    "$f" ~! variable_type_hypothesis
+    | "$e" ~! logical_hypothesis
+    | "$a" ~! axiom
+    | "$p" ~! theorem
+  ) ^^ { case kw ~ e => e }
 
-  lazy val variable_type_hypothesis: Parser[Expression] = (
-    "$f" ~> active_constant ~ active_variable ^? {
+  def variable_type_hypothesis: Parser[Expression] = (
+    active_constant ~ active_variable ^? ({
       case Right(k) ~ Right(v) => VariableType(k, v)
-    }
+    }, {
+      case Left(oops) ~ _ => oops.toString()
+      case _ ~ Left(oops) => oops.toString()
+    })
   )
 
-  lazy val logical_hypothesis: Parser[Expression] = (
-    "$e" ~> active_constant ~ active_symbols ^? {
+  def logical_hypothesis: Parser[Expression] = (
+    active_constant ~ active_symbols ^? ({
       case Right(k) ~ Right(expr) => Logical(k, expr)
-    }
+    }, {
+      case Left(oops) ~ _ => oops.toString()
+      case _ ~ Left(oops) => oops.toString()
+    })
   )
 
   def fold_either[L, R](ss: List[Either[L, R]]
@@ -175,15 +182,18 @@ class BasicSyntax extends Preprocessing with PackratParsers {
   }
 
 
-  lazy val axiom: Parser[Expression] = (
-    "$a" ~> active_constant ~ active_symbols ^? {
+  def axiom: Parser[Expression] = (
+    active_constant ~ active_symbols ^? ({
       case Right(k) ~ Right(expr) => Axiom(k, expr)
-    }
+    }, {
+      case Left(oops) ~ _ => { println("@@" + oops); oops.toString()}
+      case _ ~ Left(oops) => { println("@@" + oops); oops.toString()}
+    })
     /* TODO: hypotheses from ctx */
   )
 
-  lazy val theorem: Parser[Expression] = (
-    "$p" ~> active_constant ~ active_symbols ~ ("$=" ~> proof_steps) ^? {
+  def theorem: Parser[Expression] = (
+    active_constant ~ active_symbols ~ ("$=" ~> proof_steps) ^? {
       case Right(k) ~ Right(expr) ~ Right(proof_steps) => {
 	Theorem(k, expr, proof_steps)
       }

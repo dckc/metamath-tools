@@ -145,7 +145,33 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
     }
 
     it("""A math symbol becomes active when declared and stays active
-       until the end of the block in which it is declared.""") (pending)
+       until the end of the block in which it is declared.""") {
+      def check(txt: String) = {
+	val bs = new BasicSyntax()
+	bs.parseAll(bs.database, txt) match {
+	  case bs.Success(x, _) => x
+	  case bs.NoSuccess(why, _) => why
+	}
+      }
+      check("""
+	    stmt1 $f wff P $.
+	    """) should equal("BadSymbol(wff)")
+      check("""
+	    $c wff set |- ( -> $.
+	    $v p q $.
+	    w2 $a wff ( p -> q ) $.
+	    """) should equal("BadSymbol(p)")
+      check("""
+	    $c wff set |- ( ) -> $.
+	    $v p $.
+	    w2 $e wff ( p -> q ) $.
+	    """) should equal("BadSymbol(q)")
+      check("""
+	    $c wff set |- ( ) -> $.
+	    $v p q $.
+	    w2 $p wff ( p -> q ) $= x $.
+	    """) should equal("BadSymbol(x@@)")
+    }
 
     it("""A variable may not be declared a second time while it is
        active, but it may be declared again (as a variable, but not as
