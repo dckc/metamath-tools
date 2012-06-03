@@ -108,8 +108,8 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
     it("""After preprocessing, a database will consist of a sequence
        of statements.  """) {
       val bs = new BasicSyntax()
-      bs.ctx.constants = List("|-", "=")
-      bs.ctx.variables = List("x")
+      bs.ctx.add_constants(List("|-", "="))
+      bs.ctx.add_variables(List("x"))
       val db = bs.parseAll(bs.statements, "axiom.1 $a |- x = x $.") match {
 	case bs.Success(db, _) => db
 	case other => other
@@ -137,11 +137,11 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
 			    $c wff set |- ( ) -> $.
 			    $v P Q x $.""") match {
 	case bs.Success((ctx, Database(List())), _) => 
-	  (ctx.constants, ctx.variables)
+	  (Set() ++ ctx.constants.keys, Set() ++ ctx.variables.keys)
 	case other => other
       }
-      ctx should equal ( (List("wff", "set", "|-", "(", ")", "->"),
-			  List("P", "Q", "x") ))
+      ctx should equal ( (Set("wff", "set", "|-", "(", ")", "->"),
+			  Set("P", "Q", "x") ))
     }
 
     it("""A math symbol becomes active when declared and stays active

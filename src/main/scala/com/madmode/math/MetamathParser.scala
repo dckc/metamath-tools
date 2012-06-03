@@ -47,7 +47,7 @@ class Preprocessing extends Preliminaries {
 }
 
 class BasicSyntax extends Preprocessing {
-  val ctx = Context(List(), List(), Map(), Map(), true)
+  val ctx = Context.initial()
   def database = statements ^^ { case db => (ctx, db) }
 
   /**
@@ -103,18 +103,28 @@ class BasicSyntax extends Preprocessing {
   }
   def block_start = "${" ^^ { case kw => ctx.push() }
 
-  def declare_constants = math_symbol .* <~ "$." ^^ {
-    case syms => {
-      ctx.constants = ctx.constants ++ syms
-      d0
+  def declare_constants =
+    math_symbol .* <~ "$." ^^ { case syms => { ctx.add_constants(syms); d0 } }
+  def declare_variables =
+    math_symbol .* <~ "$." ^^ { case syms => { ctx.add_variables(syms); d0 } }
+  def active_symbol: Parser[Either[BadSymbol, Symbol]] =
+    math_symbol ^^ { case s => ctx.active_symbol(s) }
+  def active_constant =
+    math_symbol ^^ { case s => ctx.active_constant(s) }
+  def active_variable =
+    math_symbol ^^ { case s => ctx.active_variable(s) }
+  def active_symbols = rep(active_symbol) ^^ fold_either
+
+  def fold_either[L, R](ss: List[Either[L, R]]
+		 ): Either[L, List[R]] = ss match {
+    case List() => Right(List())
+    case Left(oops) :: _ => Left(oops)
+    case Right(x) :: xss => fold_either(xss) match {
+      case Right(xs) => Right(x :: xs)
+      case Left(oops) => Left(oops)
     }
   }
-  def declare_variables = math_symbol .* <~ "$." ^^ {
-    case syms => {
-      ctx.variables = ctx.variables ++ syms
-      d0
-    }
-  }
+
 
   def disjoint_variable_restriction: Parser[Database] = (
     rep(active_variable) <~ "$." ^^ {
@@ -155,32 +165,6 @@ class BasicSyntax extends Preprocessing {
       case _ ~ Left(oops) => oops.toString()
     })
   )
-
-  def fold_either[L, R](ss: List[Either[L, R]]
-		 ): Either[L, List[R]] = ss match {
-    case List() => Right(List())
-    case Left(oops) :: _ => Left(oops)
-    case Right(x) :: xss => fold_either(xss) match {
-      case Right(xs) => Right(x :: xs)
-      case Left(oops) => Left(oops)
-    }
-  }
-
-  def active_symbols = rep(active_symbol) ^^ fold_either
-  def active_symbol: Parser[Either[BadSymbol, Symbol]] =  math_symbol ^^ {
-    case s if ctx.constants.contains(s) => Right(Con(s))
-    case s if ctx.variables.contains(s) => Right(Var(s))
-    case oops => Left(BadSymbol(oops))
-  }
-  def active_constant = math_symbol ^^ {
-    case s if ctx.constants.contains(s) => Right(Con(s))
-    case oops => Left(BadSymbol(oops))
-  }
-  def active_variable = math_symbol ^^ {
-    case s if ctx.variables.contains(s) => Right(Var(s))
-    case oops => Left(BadSymbol(oops))
-  }
-
 
   def axiom: Parser[Expression] = (
     (active_constant ~! active_symbols) <~ "$." ^? ({
@@ -226,15 +210,40 @@ case class Database(statements: List[Statement])
 /**
  * not functional, but HmmImpl.hs seems to use the state monad...
  */
-case class Context(var constants: List[String],
-		   var variables: List[String],
+case class Context(var constants: Map[String, Con],
+		   var variables: Map[String, Var],
 		   /* dvrs: List[DisjointVariables], TODO: refine */
 		   var hypotheses: Map[String, Hypothesis],
 		   var statements: Map[String, Statement],
 		   val top: Boolean) {
   def push() = Context(
     constants, variables, hypotheses, statements, false)
+  def add_constants(syms: List[String]) =
+    constants = constants ++ (syms zip (syms map { Con(_) }))
+  def add_variables(syms: List[String]) =
+    variables = variables ++ (syms zip (syms map { Var(_) }))
+
+  def active_symbol(s: String): Either[BadSymbol, Symbol] =
+    (constants get s, variables get s) match {
+      case (Some(k), _) => Right(k)
+      case (_, Some(v)) => Right(v)
+      case (_, _) => Left(BadSymbol(s))
+    }
+  def active_constant(s: String) = 
+    constants get s match {
+      case Some(k) => Right(k)
+      case None => Left(BadSymbol(s))
+    }
+  def active_variable(s: String) =
+    variables get s match {
+      case Some(v) => Right(v)
+      case None => Left(BadSymbol(s))
+    }
 }
+object Context{
+  def initial() = Context(Map(), Map(), Map(), Map(), true)
+}
+
 
 sealed abstract class Symbol
 case class Var(n: String) extends Symbol
@@ -309,8 +318,8 @@ object Utility extends App {
     println("parse:")
     bs.parseAll(bs.database, reader(infn)) match {
       case bs.Success((ctx, db), _) => {
-	println("Context constants: " + ctx.constants.length)
-	println("Context variables: " + ctx.variables.length)
+	println("Context constants: " + ctx.constants.size)
+	println("Context variables: " + ctx.variables.size)
 	println("Context hypotheses: " + ctx.hypotheses.size)
 	println("Context statements: " + ctx.statements.size)
 	println("Database statements: " + db.statements.length)
