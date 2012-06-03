@@ -123,8 +123,8 @@ class BasicSyntax extends Preprocessing {
   )
 
   def labelled_statement: Parser[Database] =
-    label ~! expr ~! "$." ^^ {
-      case l ~ e ~ stmt_end => {
+    label ~! expr ^^ {
+      case l ~ e => {
 	val stmt = Statement(l, e)
 	ctx.statements = ctx.statements + (l -> stmt)
 	d1(stmt)
@@ -139,7 +139,7 @@ class BasicSyntax extends Preprocessing {
   ) ^^ { case kw ~ e => e }
 
   def variable_type_hypothesis: Parser[Expression] = (
-    active_constant ~ active_variable ^? ({
+    (active_constant ~ active_variable) <~ "$." ^? ({
       case Right(k) ~ Right(v) => VariableType(k, v)
     }, {
       case Left(oops) ~ _ => oops.toString()
@@ -148,7 +148,7 @@ class BasicSyntax extends Preprocessing {
   )
 
   def logical_hypothesis: Parser[Expression] = (
-    active_constant ~ active_symbols ^? ({
+    (active_constant ~ active_symbols) <~ "$." ^? ({
       case Right(k) ~ Right(expr) => Logical(k, expr)
     }, {
       case Left(oops) ~ _ => oops.toString()
@@ -183,21 +183,25 @@ class BasicSyntax extends Preprocessing {
 
 
   def axiom: Parser[Expression] = (
-    active_constant ~ active_symbols ^? ({
+    (active_constant ~! active_symbols) <~ "$." ^? ({
       case Right(k) ~ Right(expr) => Axiom(k, expr)
     }, {
-      case Left(oops) ~ _ => { println("@@" + oops); oops.toString()}
-      case _ ~ Left(oops) => { println("@@" + oops); oops.toString()}
+      case Left(oops) ~ _ => oops.toString()
+      case _ ~ Left(oops) => oops.toString()
     })
     /* TODO: hypotheses from ctx */
   )
 
   def theorem: Parser[Expression] = (
-    active_constant ~ active_symbols ~ ("$=" ~> proof_steps) ^? {
+    (active_constant ~ active_symbols ~ ("$=" ~> proof_steps)) <~ "$." ^? ({
       case Right(k) ~ Right(expr) ~ Right(proof_steps) => {
 	Theorem(k, expr, proof_steps)
       }
-    }
+    }, {
+      case Left(oops) ~ _ ~ _ => oops.toString()
+      case _ ~ Left(oops) ~ _ => oops.toString()
+      case _ ~ _ ~ Left(oops) => oops.toString()
+    })
   )
   def proof_steps: Parser[Either[BadName, List[Statement]]] = (
     rep1(label) ^^ {

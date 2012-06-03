@@ -150,17 +150,16 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
 	val bs = new BasicSyntax()
 	bs.parseAll(bs.database, txt) match {
 	  case bs.Success(x, _) => x
-	  case bs.NoSuccess(why, _) => why
+	  case ns @ bs.NoSuccess(why, _) => why
 	}
       }
       check("""
-	    stmt1 $f wff P $.
-	    """) should equal("BadSymbol(wff)")
-      check("""
-	    $c wff set |- ( -> $.
-	    $v p q $.
+	    $c wff set |- ( ) -> $.
 	    w2 $a wff ( p -> q ) $.
 	    """) should equal("BadSymbol(p)")
+      check("""
+	    stmt1 $f wff P $.
+	    """) should equal("BadSymbol(wff)")
       check("""
 	    $c wff set |- ( ) -> $.
 	    $v p $.
@@ -170,7 +169,7 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
 	    $c wff set |- ( ) -> $.
 	    $v p q $.
 	    w2 $p wff ( p -> q ) $= x $.
-	    """) should equal("BadSymbol(x@@)")
+	    """) should equal("BadLabel(x)")
     }
 
     it("""A variable may not be declared a second time while it is
