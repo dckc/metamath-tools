@@ -10,6 +10,9 @@
 package com.madmode.math
 
 import scala.util.parsing.combinator.{ Parsers, RegexParsers }
+import scala.collection.immutable.PagedSeq
+import scala.util.parsing.input.{PagedSeqReader}
+import java.io.{InputStreamReader,FileInputStream}
 
 class Preliminaries extends RegexParsers {
   /* WIERD! putting allowed_range before ascii_printable causes it to
@@ -44,7 +47,7 @@ class Preprocessing extends Preliminaries {
 }
 
 class BasicSyntax extends Preprocessing with CheckedParser {
-  val ctx = Context(List(), List(), Map(), Map())
+  val ctx = Context(List(), List(), Map(), Map(), true)
   def database = statements ^^ { case db => (ctx, db) }
 
   def statements: Parser[Database] = (
@@ -75,7 +78,7 @@ class BasicSyntax extends Preprocessing with CheckedParser {
       Database(assertions)
     }
   }
-  def block_start = "${" ^^ { case kw => ctx.clone() }
+  def block_start = "${" ^^ { case kw => ctx.push() }
 
   def declare_constants = "$c" ~> math_symbol .* <~ "$." ^^ { case syms =>
     ctx.constants = ctx.constants ++ syms
@@ -163,21 +166,28 @@ class BasicSyntax extends Preprocessing with CheckedParser {
   )
 
   def theorem: Parser[Either[BadName, Expression]] = (
-    "$p" ~> active_constant ~ active_symbols ~ ("$=" ~> rep(label)) ^^ {
-      case Right(k) ~ Right(expr) ~ labels => {
+    "$p" ~> active_constant ~ active_symbols ~ ("$=" ~> proof_steps) ^^ {
+      case Right(k) ~ Right(expr) ~ Right(proof_steps) => {
+	Right(Theorem(k, expr, proof_steps))
+      }
+      case Left(badsym) ~ _ ~ _ => Left(badsym)
+      case _ ~ Left(badsym) ~ _ => Left(badsym)
+      case _ ~ _ ~ Left(oops) => Left(oops)
+    }
+  )
+  def proof_steps = (
+    rep1(label) ^^ {
+      case labels =>
 	fold_either(
 	  for (l <- labels) yield (ctx.statements get l) match {
 	    case Some(s) => Right(s)
 	    case _ => Left(BadLabel(l))
 	  }
-	) match {
-	  case Right(pf) => Right(Theorem(k, expr, pf))
-	  case Left(oops) => Left(oops)
-	}
-      }
-      case Left(badsym) ~ _ ~ _ => Left(badsym)
-      case _ ~ Left(badsym) ~ _ => Left(badsym)
+	)
     }
+    /* TODO: compressed proofs */
+    | ("(" ~> rep(label) <~ ")") ~ "[A-Z ]+".r ^^ { case labels ~ digits =>
+      Right(List()) }
   )
 }
 
@@ -205,8 +215,10 @@ case class Context(var constants: List[String],
 		   var variables: List[String],
 		   /* dvrs: List[DisjointVariables], TODO: refine */
 		   var hypotheses: Map[String, Hypothesis],
-		   var statements: Map[String, Statement]) {
-  override def clone() = Context(constants, variables, hypotheses, statements)
+		   var statements: Map[String, Statement],
+		   val top: Boolean) {
+  def push() = Context(
+    constants, variables, hypotheses, statements, false)
 }
 
 sealed abstract class Symbol
@@ -252,7 +264,16 @@ case class Theorem(mark: Con, symbols: List[Symbol],
 }
 
 
-object ExampleApp extends App {
+object Utility extends App {
+  def reader(filename: String) = {
+    val bytes_in = new FileInputStream(filename)
+    val chars_in = new InputStreamReader(bytes_in)
+    def more(buf: Array[Char], start: Int, end: Int): Int = {
+      chars_in.read(buf, start, end)
+    }
+    new PagedSeqReader(new PagedSeq(more))
+  }
+
   override def main(args: Array[String]) {
     if (args.length != 2) {
       println("Usage: parser input_file")
@@ -260,19 +281,20 @@ object ExampleApp extends App {
     }
 
     val infn = args(1)
-    val fis = new java.io.FileInputStream(infn)
-    val isr = new java.io.InputStreamReader(fis)
     val bs = new BasicSyntax()
-    bs.parseAll(bs.database, isr) match {
+    bs.parseAll(bs.database, reader(infn)) match {
       case bs.Success((ctx, db), _) => {
-	println("Context: " + ctx)
-	println("Database: " + db)
+	println("Context constants: " + ctx.constants.length)
+	println("Context variables: " + ctx.variables.length)
+	println("Context hypotheses: " + ctx.hypotheses.size)
+	println("Context statements: " + ctx.statements.size)
+	println("Database statements: " + db.statements.length)
       }
       case bs.NoSuccess(failure, rest) => {
 	println(failure)
+	println(rest.pos)
 	println("Context: " + bs.ctx)
       }
     }
   }
 }
-

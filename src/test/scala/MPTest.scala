@@ -214,8 +214,61 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
 					Con(")"), Con(")")),
 				   List(ws, wr, wp, w2, w2)))
       stmts should equal (List(wp, wq, wr, ws, w2, wnew))
-
     }
 
+    it("""A $f, $e, or $d statement is active from the place it occurs
+       until the end of the block it occurs in.  """) (pending)
+
+    it(""" A $a or $p statement is active from the place it occurs
+       through the end of the database.  """) (pending)
+
+    it("""There may not be two active $f statements containing the
+       same variable.  """) (pending)
+
+    it("""Each variable in a $e, $a, or $p statement must exist in an
+       active $f statement.  """) (pending)
+
+    it("""Each label token must be unique.""") (pending)
+
+    it("""No label token may match any math symbol token.""") (pending)
+
+    it("""The set of mandatory variables associated with an assertion
+       is the set of (zero or more) variables in the assertion and in
+       any active $e statements.  """) (pending)
+
+    it("""The (possibly empty) set of mandatory hypotheses is the set
+       of all active $f statements containing mandatory variables,
+       together with all active $e statements. """) (pending)
+
+    it("""The set of mandatory $d statements associated with an
+       assertion are those active $d statements whose variables are
+       both among the assertion’s mandatory variables.  """) (pending)
+
+    it("""A compressed proof, located between $= and $. keywords,
+       consists of a left parenthesis, a sequence of statement labels,
+       a right parenthesis, and a sequence of upper-case letters A
+       through Z (with optional white space between them).  """
+     ) {
+      val bs = new BasicSyntax()
+      val stmts = bs.parseAll(bs.database, """
+			      $c |- $.
+			      $v ph ps $.
+			      ${
+				dummylink.1 $e |- ph $.
+			        dummylink.2 $e |- ps $.
+			      
+			        dummylink $p |- ph $=
+				  (  ) C $.
+			      $( [7-Feb-2006] $)
+			      $}
+			      """
+			    ) match {
+	case bs.Success((ctx, Database(
+	  List(Statement(l, Theorem(Con(mark), _, _))) )), _) => (l, mark)
+	case other => other
+      }
+      stmts should equal (
+	("dummylink", "|-") )
+    }
   }
 }
