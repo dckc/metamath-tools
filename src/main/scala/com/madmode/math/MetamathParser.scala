@@ -210,38 +210,36 @@ case class Database(statements: List[Statement])
 /**
  * not functional, but HmmImpl.hs seems to use the state monad...
  */
-case class Context(var constants: Map[String, Con],
-		   var variables: Map[String, Var],
+case class Context(var symbols: Map[String, Symbol],
 		   /* dvrs: List[DisjointVariables], TODO: refine */
 		   var hypotheses: Map[String, Hypothesis],
 		   var statements: Map[String, Statement],
 		   val top: Boolean) {
   def push() = Context(
-    constants, variables, hypotheses, statements, false)
+    symbols, hypotheses, statements, false)
   def add_constants(syms: List[String]) =
-    constants = constants ++ (syms zip (syms map { Con(_) }))
+    symbols = symbols ++ (syms zip (syms map { Con(_) }))
   def add_variables(syms: List[String]) =
-    variables = variables ++ (syms zip (syms map { Var(_) }))
+    symbols = symbols ++ (syms zip (syms map { Var(_) }))
 
-  def active_symbol(s: String): Either[BadSymbol, Symbol] =
-    (constants get s, variables get s) match {
-      case (Some(k), _) => Right(k)
-      case (_, Some(v)) => Right(v)
-      case (_, _) => Left(BadSymbol(s))
+  def active_symbol(name: String): Either[BadSymbol, Symbol] =
+    symbols get name match {
+      case Some(sym) => Right(sym)
+      case None => Left(BadSymbol(name))
     }
-  def active_constant(s: String) = 
-    constants get s match {
-      case Some(k) => Right(k)
-      case None => Left(BadSymbol(s))
+  def active_constant(name: String) = 
+    symbols get name match {
+      case Some(k @ Con(_)) => Right(k)
+      case _ => Left(BadSymbol(name))
     }
-  def active_variable(s: String) =
-    variables get s match {
-      case Some(v) => Right(v)
-      case None => Left(BadSymbol(s))
+  def active_variable(name: String) =
+    symbols get name match {
+      case Some(v @ Var(_)) => Right(v)
+      case _ => Left(BadSymbol(name))
     }
 }
 object Context{
-  def initial() = Context(Map(), Map(), Map(), Map(), true)
+  def initial() = Context(Map(), Map(), Map(), true)
 }
 
 
@@ -318,8 +316,7 @@ object Utility extends App {
     println("parse:")
     bs.parseAll(bs.database, reader(infn)) match {
       case bs.Success((ctx, db), _) => {
-	println("Context constants: " + ctx.constants.size)
-	println("Context variables: " + ctx.variables.size)
+	println("Context symbols: " + ctx.symbols.size)
 	println("Context hypotheses: " + ctx.hypotheses.size)
 	println("Context statements: " + ctx.statements.size)
 	println("Database statements: " + db.statements.length)

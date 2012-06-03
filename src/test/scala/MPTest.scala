@@ -137,11 +137,12 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
 			    $c wff set |- ( ) -> $.
 			    $v P Q x $.""") match {
 	case bs.Success((ctx, Database(List())), _) => 
-	  (Set() ++ ctx.constants.keys, Set() ++ ctx.variables.keys)
+	  (Set() ++ ctx.symbols.values)
 	case other => other
       }
-      ctx should equal ( (Set("wff", "set", "|-", "(", ")", "->"),
-			  Set("P", "Q", "x") ))
+      ctx should equal ( (Set(Con("wff"), Con("set"),
+			      Con("|-"), Con("("), Con(")"), Con("->"),
+			      Var("P"), Var("Q"), Var("x")) ))
     }
 
     it("""A math symbol becomes active when declared and stays active
