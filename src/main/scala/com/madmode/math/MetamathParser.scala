@@ -18,7 +18,7 @@ class Preliminaries extends RegexParsers {
   /* WIERD! putting allowed_range before ascii_printable causes it to
    * get the value "nullnull". */
   val ascii_printable = "\u0021-\u007f"
-  val ws_char = " \t\r\n\f"
+  def ws_char = " \t\r\n\f"
   val allowed_range = ascii_printable + ws_char
 
   def tokens = rep(keyword | label | math_symbol)
@@ -31,28 +31,98 @@ class Preliminaries extends RegexParsers {
 }
 
 class Preprocessing extends Preliminaries {
-  /**
-   * Note use of reluctant *?
-   * http://docs.oracle.com/javase/1.4.2/docs/api/java/util/regex/Pattern.html
-   */
-  override val whiteSpace = (
-    "(?:[" + ws_char + "]|(?:" +
-    """\$\(""" + "[" + allowed_range + "]*?" + """\$\)"""
-    + "))+"
-  ).r
+  override val whiteSpace = ("[" + ws_char + "]").r
 
+  def comment = (
+    "$(" ~!
+    ("(?:[" + allowed_range + """&&[^\$]]|\$["""
+     + allowed_range + """&&[^\)]])*""").r
+    ~! "$)"
+  ) ^^ { case start ~ content ~ end => start + content + end }
 
-  def file_inclusion_command = "$[" ~! filename ~! "$]"
+  /** ignore comments */
+  def igc[T](p: => Parser[T]): Parser[T] = (comment.*) ~> p
+
+  def file_inclusion_command = igc("$[" ~! filename ~! "$]")
   def filename = ("[" + ascii_printable + """&&[^\$]]+""").r
+
+  def block_start = igc( "${") ^^^ BlockStart
+  def block_end = igc( "$}") ^^^ BlockEnd
+
+  def unlabelled_statement = (
+    igc( ("$c" | "$v" | "$d") )
+    ~! igc(math_symbol).*
+    <~ "$."
+    ) ^^ {
+    case "$c" ~ symbols => ConstantDeclaration(symbols)
+    case "$v" ~ symbols => VariableDeclaration(symbols)
+    case "$d" ~ symbols => DisjointValueRestriction(symbols)
+  }
+
+  def documentation: Parser[String] =
+    (comment ~> documentation) | comment
+  def labelled_statement = (
+    documentation.? ~ label ~! igc ("$f" | "$e" | "$a" | "$p")
+    ~! (igc(math_symbol) *)
+    ~! (igc("$=") ~> proof).?
+    <~ "$."
+  ) ^? ({
+    case doc ~ label ~ "$f" ~ expr ~ None =>
+      FloatingHypothesis(doc, label, expr)
+    case doc ~ label ~ "$e" ~ expr ~ None =>
+      EssentialHypothesis(doc, label, expr)
+    case doc ~ label ~ "$a" ~ expr ~ None =>
+      AxiomaticAssertion(doc, label, expr)
+    case doc ~ label ~ "$p" ~ expr ~ Some(pf) =>
+      ProvableAssertion(doc, label, expr, pf)
+  }, {
+    case doc ~ label ~ "$p" ~ expr ~ None =>
+      "missing $= in $p statement"
+    case doc ~ label ~ kw ~ expr ~ Some(pf) =>
+      "unexpected $= in " + kw + " statement"
+  })
+
+  def proof: Parser[Proof] = (
+    (igc("(") ~> igc(label) .+  <~ igc(")") ) ~ ("[A-Z" + ws_char + "]").r ^^ {
+      case labels ~ digits => CompressedProof(labels, digits)
+    }
+    | igc(label) .+ ^^ { case labels => ExplicitProof(labels) }
+  )
 }
 
+sealed abstract class StatementToken
+sealed abstract class ScopingStatement extends StatementToken
+case object BlockStart extends ScopingStatement
+case object BlockEnd extends ScopingStatement
+case class ConstantDeclaration(cs: List[String]) extends StatementToken
+case class VariableDeclaration(vs: List[String]) extends StatementToken
+case class DisjointValueRestriction(vs: List[String]) extends StatementToken
+case class FloatingHypothesis(doc: Option[String], label: String,
+			      expr: List[String])
+     extends StatementToken
+case class EssentialHypothesis(doc: Option[String], label: String,
+			       expr: List[String])
+     extends StatementToken
+case class AxiomaticAssertion(doc: Option[String], label: String,
+			      expr: List[String])
+     extends StatementToken
+case class ProvableAssertion(doc: Option[String], label: String,
+			     expr: List[String],
+			     pf: Proof)
+     extends StatementToken
+
+sealed abstract class Proof
+case class CompressedProof(labels: List[String], digits: String) extends Proof
+case class ExplicitProof(labels: List[String]) extends Proof
+
+/* @@@
 class BasicSyntax extends Preprocessing {
   val ctx = Context.initial()
   def database = statements ^^ { case db => (ctx, db) }
 
-  /**
+  /@@**
    * for testing...
-   */
+   @@/
   def statements_lex: Parser[List[List[String]]] = rep(statement_lex)
   def statement_lex: Parser[List[String]] = (
     "${" ^^ { case kw => List(kw) }
@@ -66,10 +136,6 @@ class BasicSyntax extends Preprocessing {
 	 }
        }
   )
-  def proof_lex = opt("$=" ~ rep (label | "(" | ")")) ^^ {
-    case Some(kwp ~ pf_steps) => List(kwp) ++ pf_steps
-    case None => List()
-  }
 
   def statements: Parser[Database] = (
     statement ~! statements ^^ {
@@ -104,9 +170,9 @@ class BasicSyntax extends Preprocessing {
   def block_start = "${" ^^ { case kw => ctx.push() }
 
   def declare_constants =
-    math_symbol .* <~ "$." ^^ { case syms => { ctx.add_constants(syms); d0 } }
+    math_symbol.* <~ "$." ^^ { case syms => { ctx.add_constants(syms); d0 } }
   def declare_variables =
-    math_symbol .* <~ "$." ^^ { case syms => { ctx.add_variables(syms); d0 } }
+    math_symbol.* <~ "$." ^^ { case syms => { ctx.add_variables(syms); d0 } }
   def active_symbol: Parser[Either[BadSymbol, Symbol]] =
     math_symbol ^^ { case s => ctx.active_symbol(s) }
   def active_constant =
@@ -173,7 +239,7 @@ class BasicSyntax extends Preprocessing {
       case Left(oops) ~ _ => oops.toString()
       case _ ~ Left(oops) => oops.toString()
     })
-    /* TODO: hypotheses from ctx */
+    /@* TODO: hypotheses from ctx *@/
   )
 
   def theorem: Parser[Expression] = (
@@ -197,12 +263,15 @@ class BasicSyntax extends Preprocessing {
 	  }
 	)
     }
-    /* TODO: compressed proofs */
+    /@* TODO: compressed proofs *@/
     | ("(" ~> rep(label) <~ ")") ~ proof_step_indexes ^^ {
       case labels ~ digits => Right(List()) }
   )
   def proof_step_indexes = """[A-Z \t\r\f\n]+""".r
 }
+
+@@@@@@ */
+
 
 /* ack: HmmImpl.hs */
 case class Database(statements: List[Statement])
