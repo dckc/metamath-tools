@@ -12,26 +12,28 @@ source file are the 94 printable characters on standard ascii keyboards ...
 plus the following non-printable (white space) characters: space, tab, car-
 riage return, line feed, and form feed.""") {
 
-      val s = p.parseAll(p.label, "$( \u0000 is not allowed $) label") match {
+      val s = p.parseAll(p.comment, "$( x \u0000 is not allowed $)") match {
 	case p.Success(txt, _) => txt
-	/* TODO: better diagnostic for bad character. */
-	case p.NoSuccess(failure, _) => "BAD CHAR"
+	case p.NoSuccess(failure, where) => where.pos
       }
-      s should equal ("BAD CHAR")
+      s.toString() should equal ("1.6")
     }
 
     it("""A Metamath database consists of a sequence of three kinds of tokens
        separated by white space.""") {
-      val parts = p.parseAll(p.tokens, "axiom.1 $a |- x = x $.") match {
+      val parts = p.parseAll(p.token, "axiom.1 $a |- x = x $.") match {
 	case p.Success(result, _) => result
 	case p.NoSuccess(failure, _) => failure
       }
-      parts should equal (List("axiom.1", "$a", "|-", "x", "=", "x", "$."))
+      parts should equal (
+	p.StatementParts(None,Some(Symbol("axiom.1")),"$a",
+			 List(Symbol("|-"), 'x, Symbol("="), 'x),None)
+      )
     }
 
     it("""The set of keyword tokens is ${, $}, $c, $v, $f, $e, $d, $a,
        $p, $., $=, $(, $), $[, and $]. The last four are called
-       auxiliary or preprocessing keywords. """) {
+       auxiliary or preprocessing keywords. """) (pending) /*{
       val parts = p.parseAll(p.tokens,
 			      "${ $} $c $v $f $e $d $a $p $. $=") match {
 	case p.Success(result, _) => result
@@ -40,22 +42,27 @@ riage return, line feed, and form feed.""") {
       parts should equal (List("${", "$}", "$c", "$v", "$f", "$e",
 			       "$d", "$a", "$p", "$.", "$="))
     }
+    */
 
     it("""A label token consists of any combination of
-letters, digits, and the characters hyphen, underscore, and period.""") {
-      val l = p.parseAll(p.label, "letters09-_.") match {
-	case p.Success(txt, _) => txt
-	case p.NoSuccess(failure, _) => failure
+       letters, digits, and the characters hyphen, underscore, and period."""
+     )
+    {
+      val l = p.parseAll(p.token, "letters09-_. $a k expr $.") match {
+	case p.Success(p.StatementParts(_, Some(Symbol(txt)), _, _, _), _) =>
+	  txt
+	case fail @ p.NoSuccess(_, _) => fail
       }
       l should equal ("letters09-_.")
 
-      val notl = p.parseAll(p.label, "letter$") match {
-	case p.Success(txt, _) => txt
-	case p.NoSuccess(failure, _) => "NOT LABEL"
+      val notl = p.parseAll(p.token, "letter$ $a k expr $.") match {
+	case p.Success(x, _) => x
+	case p.NoSuccess(failure, rest) => rest.pos
       }
-      notl should equal ("NOT LABEL")
+      notl.toString() should equal ("1.7")
     }
 
+    /*
     it("""A math symbol token may consist of any combination of the 93
           printable standard ascii characters other than $ .""") {
       val sym = p.parseAll(p.math_symbol, "|-") match {
@@ -73,9 +80,11 @@ letters, digits, and the characters hyphen, underscore, and period.""") {
       sym should equal ("case-SENSITIVE")
     }
 
+    */
   }
 }
 
+/*
 class TestPreprocessing extends Spec with ShouldMatchers {
   describe("4.1.2 Preprocessing") {
     val p = new Preprocessing()
@@ -101,8 +110,9 @@ class TestPreprocessing extends Spec with ShouldMatchers {
 
   }
 }
+*/
 
-
+/* @@22
 class TestBasicSyntax extends Spec with ShouldMatchers {
   describe("4.1.3 Basic Syntax") {
     it("""After preprocessing, a database will consist of a sequence
@@ -298,3 +308,4 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
     }
   }
 }
+*/
