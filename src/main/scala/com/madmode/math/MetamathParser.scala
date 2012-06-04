@@ -10,18 +10,20 @@
 package com.madmode.math
 
 import scala.util.parsing.combinator.{ Parsers, RegexParsers, PackratParsers }
+import scala.util.parsing.combinator.{ lexical, syntactical, token }
 import scala.collection.immutable.PagedSeq
 import scala.util.parsing.input.{PagedSeqReader}
 import java.io.{InputStreamReader,FileInputStream}
 
-class Preliminaries extends RegexParsers {
+abstract class Preliminaries extends RegexParsers {
+
   /* WIERD! putting allowed_range before ascii_printable causes it to
    * get the value "nullnull". */
   val ascii_printable = "\u0021-\u007f"
   def ws_char = " \t\r\n\f"
   val allowed_range = ascii_printable + ws_char
 
-  def tokens = rep(keyword | label | math_symbol)
+  /*@@ def tokens = rep(keyword | label | math_symbol) */
   def keyword = ( "${" | "$}" | "$c" | "$v" | "$f" | "$e"
 		 | "$d" | "$a" | "$p" | "$." | "$="
 		 | "$(" | "$)" | "$[" | "$]" )
@@ -30,8 +32,18 @@ class Preliminaries extends RegexParsers {
   def math_symbol: Parser[String] = ("[" + ascii_printable + """&&[^\$]]+""").r
 }
 
-class Preprocessing extends Preliminaries {
-  override val whiteSpace = ("[" + ws_char + "]").r
+class Preprocessing extends Preliminaries
+with token.Tokens
+with lexical.Scanners {
+  override type Elem = Char
+  override def token = (
+    file_inclusion_command
+    | block_start | block_end
+    | unlabelled_statement
+    | labelled_statement
+  )
+
+  def whitespace = ("[" + ws_char + "]").r
 
   def comment = (
     "$(" ~!
@@ -43,7 +55,8 @@ class Preprocessing extends Preliminaries {
   /** ignore comments */
   def igc[T](p: => Parser[T]): Parser[T] = (comment.*) ~> p
 
-  def file_inclusion_command = igc("$[" ~! filename ~! "$]")
+  def file_inclusion_command = igc("$[" ~> filename <~ "$]") ^^ {
+    case filename => FileInclusion(filename) }
   def filename = ("[" + ascii_printable + """&&[^\$]]+""").r
 
   def block_start = igc( "${") ^^^ BlockStart
@@ -88,35 +101,49 @@ class Preprocessing extends Preliminaries {
     }
     | igc(label) .+ ^^ { case labels => ExplicitProof(labels) }
   )
-}
 
-sealed abstract class StatementToken
-sealed abstract class ScopingStatement extends StatementToken
-case object BlockStart extends ScopingStatement
-case object BlockEnd extends ScopingStatement
-case class ConstantDeclaration(cs: List[String]) extends StatementToken
-case class VariableDeclaration(vs: List[String]) extends StatementToken
-case class DisjointValueRestriction(vs: List[String]) extends StatementToken
+/*@@indent*/
+sealed abstract class StatementToken(kw: String) extends Token{
+  def chars = kw
+}
+case class FileInclusion(filename: String)
+     extends StatementToken("${")
+sealed abstract class ScopingStatement(kw: String)
+		extends StatementToken(kw)
+case object BlockStart
+		extends ScopingStatement("${")
+case object BlockEnd
+		extends ScopingStatement("$}")
+case class ConstantDeclaration(cs: List[String])
+     extends StatementToken("$c")
+case class VariableDeclaration(vs: List[String])
+     extends StatementToken("$v")
+case class DisjointValueRestriction(vs: List[String])
+     extends StatementToken("$d")
 case class FloatingHypothesis(doc: Option[String], label: String,
 			      expr: List[String])
-     extends StatementToken
+     extends StatementToken("$f")
 case class EssentialHypothesis(doc: Option[String], label: String,
 			       expr: List[String])
-     extends StatementToken
+     extends StatementToken("$e")
 case class AxiomaticAssertion(doc: Option[String], label: String,
 			      expr: List[String])
-     extends StatementToken
+     extends StatementToken("$a")
 case class ProvableAssertion(doc: Option[String], label: String,
 			     expr: List[String],
 			     pf: Proof)
-     extends StatementToken
+     extends StatementToken("$p")
 
 sealed abstract class Proof
 case class CompressedProof(labels: List[String], digits: String) extends Proof
 case class ExplicitProof(labels: List[String]) extends Proof
+}
 
-/* @@@
-class BasicSyntax extends Preprocessing {
+class BasicSyntax extends syntactical.TokenParsers {
+  override type Tokens = Preprocessing
+  override val lexical = new Preprocessing
+
+/*
   val ctx = Context.initial()
   def database = statements ^^ { case db => (ctx, db) }
 
@@ -268,9 +295,8 @@ class BasicSyntax extends Preprocessing {
       case labels ~ digits => Right(List()) }
   )
   def proof_step_indexes = """[A-Z \t\r\f\n]+""".r
-}
-
 @@@@@@ */
+}
 
 
 /* ack: HmmImpl.hs */
@@ -355,6 +381,7 @@ case class Theorem(mark: Con, symbols: List[Symbol],
 }
 
 
+/*@@@@@
 object Utility extends App {
   def reader(filename: String) = {
     val bytes_in = new FileInputStream(filename)
@@ -397,3 +424,4 @@ object Utility extends App {
     }
   }
 }
+*/
