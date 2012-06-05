@@ -38,7 +38,7 @@ with lexical.Scanners {
   override type Elem = Char
   override def token = scoping_statement | statement
 
-  def whitespace = ("[" + ws_char + "]").r
+  override def whitespace = ("[" + ws_char + "]*").r
 
   def comment = (
     "$(" ~!
@@ -102,13 +102,14 @@ case class Proof(labels: List[String], digits: Option[String])
 
 class BasicSyntax extends syntactical.TokenParsers {
   override type Tokens = Preprocessing
+  /** TODO: consider moving to constructor arg */
   override val lexical = new Preprocessing
 
   val ctx = Context.initial()
   def d0 = Database(List())
   def d1(s: Labelled) = Database(List(s))
 
-  def database = statements ^^ { case db => (ctx, db) }
+  def database = phrase(statements) ^^ { case db => (ctx, db) }
 
   def statements: Parser[Database] = (
     statement ~! statements ^^ {

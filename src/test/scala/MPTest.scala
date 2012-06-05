@@ -127,7 +127,6 @@ class TestPreprocessing extends Spec with ShouldMatchers {
   }
 }
 
-/* @@22
 class TestBasicSyntax extends Spec with ShouldMatchers {
   describe("4.1.3 Basic Syntax") {
     it("""After preprocessing, a database will consist of a sequence
@@ -135,16 +134,21 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
       val bs = new BasicSyntax()
       bs.ctx.add_constants(List("|-", "="))
       bs.ctx.add_variables(List("x"))
-      val db = bs.parseAll(bs.statements, "axiom.1 $a |- x = x $.") match {
+      println("@@bs.lexical.Scanner")
+      val s = new bs.lexical.Scanner("axiom.1 $a |- x = x $.")
+      println("@@first: " + s.first)
+      val db = bs.statement(s) match {
 	case bs.Success(db, _) => db
 	case other => other
       }
       db should equal (
-	Database(List(Statement("axiom.1",
+	Database(List(Labelled(None, Symbol("axiom.1"),
 				Axiom(Con("|-"),
 				      List(Var("x"), Con("="), Var("x")))))) )
     }
+  }
 
+/*
     it("${ begins a block and a matching $} ends the block.") {
       val bs = new BasicSyntax()
       val db = bs.parseAll(bs.statements, "${ $} ${ ${ $} $}") match {
@@ -322,5 +326,5 @@ class TestBasicSyntax extends Spec with ShouldMatchers {
 	("dummylink", "|-") )
     }
   }
-}
 */
+}
