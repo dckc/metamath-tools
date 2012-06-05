@@ -106,33 +106,26 @@ riage return, line feed, and form feed.""") {
   
 }
 
-/*
 class TestPreprocessing extends Spec with ShouldMatchers {
   describe("4.1.2 Preprocessing") {
     val p = new Preprocessing()
 
     it("""Comments are ignored (treated like white space) for the
        purpose of parsing."""  ) {
-      val parts1 = p.parseAll(p.tokens,
-			     "$( turnstile $)") match {
-	case p.Success(result, _) => result
-	case failure => failure
-      }
-      parts1 should equal (List())
-
-      val parts = p.parseAll(p.tokens,
+      val parts = p.parseAll(p.token,
 			     "axiom.1 $a $( turnstile $) |- x = x $.") match {
 	case p.Success(result, _) => result
 	case p.NoSuccess(failure, _) => failure
       }
-      parts should equal (List("axiom.1", "$a", "|-", "x", "=", "x", "$."))
+      parts should equal (
+	p.StatementParts(None,Some("axiom.1"),"$a",
+			 List("|-", "x", "=", "x"),None) )
     }
 
     it("The contents of the file replace the inclusion command.") (pending)
 
   }
 }
-*/
 
 /* @@22
 class TestBasicSyntax extends Spec with ShouldMatchers {
