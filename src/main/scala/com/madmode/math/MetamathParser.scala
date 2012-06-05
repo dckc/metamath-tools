@@ -6,6 +6,9 @@
  * http://us.metamath.org/index.html#book
  * ISBN: 978-1-4116-3724-5
  * esp. section 4.1 Specification of the Metamath Language
+ *
+ * ack: HmmImpl.hs (@@cite fully)
+ *
  */
 package com.madmode.math
 
@@ -22,11 +25,6 @@ abstract class Preliminaries extends RegexParsers {
   val ascii_printable = "\u0021-\u007f"
   def ws_char = " \t\r\n\f"
   val allowed_range = ascii_printable + ws_char
-
-  /*@@ def tokens = rep(keyword | label | math_symbol) */
-  def keyword = ( "${" | "$}" | "$c" | "$v" | "$f" | "$e"
-		 | "$d" | "$a" | "$p" | "$." | "$="
-		 | "$(" | "$)" | "$[" | "$]" )
 
   def label: Parser[String] =
     """[A-Za-z0-9\-_\.]+""".r
@@ -52,11 +50,10 @@ with lexical.Scanners {
   /** ignore comments */
   def igc[T](p: => Parser[T]): Parser[T] = (comment.*) ~> p
 
-/*@@@@@@@
+  /** TODO: lexically include files */
   def file_inclusion_command = igc("$[" ~> filename <~ "$]") ^^ {
-    case filename => FileInclusion(filename) }
+    case filename => filename }
   def filename = ("[" + ascii_printable + """&&[^\$]]+""").r
-*/
 
   def scoping_statement = block_start | block_end
   def block_start = igc( "${" ) ^^^ BlockStart()
@@ -71,15 +68,14 @@ with lexical.Scanners {
   def documentation: Parser[String] =
     (comment ~> documentation) | comment
 
-      /* TODO: consider interning keywords to save memory */
   def keyword7 = ("$c" | "$v" | "$f" | "$e" | "$d" | "$a" | "$p")
   def expression = igc(math_symbol) *
 
   def proof: Parser[Proof] = "$=" ~> (
     (igc("(") ~> igc(label) .+  <~ igc(")") ) ~ ("[A-Z" + ws_char + "]").r ^^ {
-      case labels ~ digits => CompressedProof(labels, digits)
+      case labels ~ digits => Proof(labels, Some(digits))
     }
-    | igc(label) .+ ^^ { case labels => ExplicitProof(labels) }
+    | igc(label) .+ ^^ { case labels => Proof(labels, None) }
   )
 
   sealed abstract class StatementToken(kw: String) extends Token{
@@ -100,10 +96,7 @@ with lexical.Scanners {
 }
 
 
-/** TODO: Proof.toString() */
-sealed abstract class Proof
-case class CompressedProof(labels: List[String], digits: String) extends Proof
-case class ExplicitProof(labels: List[String]) extends Proof
+case class Proof(labels: List[String], digits: Option[String])
 
 class BasicSyntax extends syntactical.TokenParsers {
   override type Tokens = Preprocessing
@@ -111,7 +104,7 @@ class BasicSyntax extends syntactical.TokenParsers {
 
   val ctx = Context.initial()
   def d0 = Database(List())
-  def d1(s: Statement) = Database(List(s))
+  def d1(s: Labelled) = Database(List(s))
 
   def database = statements ^^ { case db => (ctx, db) }
 
@@ -143,7 +136,7 @@ class BasicSyntax extends syntactical.TokenParsers {
       case lexical.StatementParts(_, None, "$v", syms, None) =>
 	{ ctx.add_variables(syms); d0 }
       case lexical.StatementParts(_, None, "$d", syms, None) =>
-	/*@@*/ d0
+	/*@@ TODO: distinct variable restriction handling */ d0
     }, {
       case lexical.StatementParts(_, None, kw @ LabelledKeyword(), syms, _) =>
 	kw + " statement requires label"
@@ -165,62 +158,20 @@ class BasicSyntax extends syntactical.TokenParsers {
     (kw, pfopt) match {
       case ("$f", None) => VariableType.in_context(ctx, expr)
       case ("$e", None) => Logical.in_context(ctx, expr)
-/*@@@@@@@
       case ("$a", None) => Axiom.in_context(ctx, expr)
       case ("$p", Some(pf)) => Theorem.in_context(ctx, expr, pf)
-*/
 
       case ("$p", None) => Left(MissingProof())
       case (kw, Some(pf)) => Left(UnexpectedProof(kw))
     }
 
-/*@@@@@
-  def axiom: Parser[Expression] = (
-    (active_constant ~! active_symbols) <~ "$." ^? ({
-      case Right(k) ~ Right(expr) => Axiom(k, expr)
-    }, {
-      case Left(oops) ~ _ => oops.toString()
-      case _ ~ Left(oops) => oops.toString()
-    })
-    /@* TODO: hypotheses from ctx *@/
-  )
-
-  def theorem: Parser[Expression] = (
-    (active_constant ~ active_symbols ~ ("$=" ~> proof_steps)) <~ "$." ^? ({
-      case Right(k) ~ Right(expr) ~ Right(proof_steps) => {
-	Theorem(k, expr, proof_steps)
-      }
-    }, {
-      case Left(oops) ~ _ ~ _ => oops.toString()
-      case _ ~ Left(oops) ~ _ => oops.toString()
-      case _ ~ _ ~ Left(oops) => oops.toString()
-    })
-  )
-  def proof_steps: Parser[Either[BadExpr, List[Statement]]] = (
-    rep1(label) ^^ {
-      case labels =>
-	fold_either(
-	  for (l <- labels) yield (ctx.statements get l) match {
-	    case Some(s) => Right(s)
-	    case None => Left(BadLabel(l))
-	  }
-	)
-    }
-    /@* TODO: compressed proofs *@/
-    | ("(" ~> rep(label) <~ ")") ~ proof_step_indexes ^^ {
-      case labels ~ digits => Right(List()) }
-  )
-  def proof_step_indexes = """[A-Z \t\r\f\n]+""".r
-@@@@@@ */
 }
 
 
-/* ack: HmmImpl.hs */
-case class Database(statements: List[Statement])
+case class Database(statements: List[Labelled])
 
-sealed abstract class Statement
 case class Labelled(doc: Option[String], label: Symbol,
-		    expr: Expression) extends Statement {
+		    expr: Expression) {
   override def toString = "\n " + label.name + " " + expr.toString() + " $."
 }
 
@@ -230,6 +181,7 @@ sealed abstract class Expression(kw: String) {
     (List(kw) ++ (expr map { _.name })) mkString " "
   }
 }
+
 
 sealed abstract class Hypothesis(kw: String) extends Expression(kw)
 case class VariableType(t: Con, v: Var) extends Hypothesis("$f") {
@@ -257,15 +209,9 @@ case class Logical(k: Con, syms: List[MathSymbol]) extends Hypothesis("$e") {
 object Logical {
   def in_context(ctx: Context,
 		 expr: List[String]): Either[BadExpr, Logical] = {
-    expr match {
-      case k :: sym :: syms => {
-	(ctx.active_constant(k), ctx.active_symbols(sym :: syms)) match {
-	  case (Right(k), Right(ss)) => Right(Logical(k, ss))
-	  case (Left(oops), _) => Left(oops)
-	  case (_, Left(oops)) => Left(oops)
-	}
-      }
-      case _ => Left(BadLength(expr))
+    ctx.active_parts(expr) match {
+      case Right((k, ss)) => Right(Logical(k, ss))
+      case Left(oops) => Left(oops)
     }
   }
 }
@@ -274,12 +220,43 @@ sealed abstract class Assertion(kw: String) extends Expression(kw)
 case class Axiom(k: Con, syms: List[MathSymbol]) extends Assertion("$a") {
   override def expr = k :: syms
 }
+object Axiom {
+  def in_context(ctx: Context,
+		 expr: List[String]): Either[BadExpr, Axiom] = {
+    ctx.active_parts(expr) match {
+      case Right((k, ss)) => Right(Axiom(k, ss))
+      case Left(oops) => Left(oops)
+    }
+  }
+}
 
-case class Theorem(k: Con, syms: List[MathSymbol], pf: Proof)
-     extends Assertion("$p") {
-       override def expr = k :: syms
-       override def toString = super.toString() + "\n$= " + pf
-     }
+case class Theorem(k: Con, syms: List[MathSymbol],
+		   pf_steps: List[Labelled],
+		   compressed: Option[String]) extends Assertion("$p") {
+  override def expr = k :: syms
+  override def toString = {
+    val steps = (pf_steps map { _.label }) mkString(" ")
+    super.toString() + "\n$= " + (compressed match {
+      case None => steps
+      case Some(digits) => "( " + steps + " ) " + digits
+    })
+  }
+}
+object Theorem {
+  def in_context(ctx: Context,
+		 expr: List[String],
+		 pf: Proof): Either[BadExpr, Theorem] = {
+    ctx.active_parts(expr) match {
+      case Right((k, ss)) => {
+	ctx.active_labels(pf.labels) match {
+	  case Right(statements) => Right(Theorem(k, ss, statements, pf.digits))
+	  case Left(oops) => Left(oops)
+	}
+      }
+      case Left(oops) => Left(oops)
+    }
+  }
+}
 
 
 /**
@@ -288,22 +265,19 @@ case class Theorem(k: Con, syms: List[MathSymbol], pf: Proof)
 case class Context(var symbols: Map[String, MathSymbol],
 		   /* dvrs: List[DisjointVariables], TODO: refine */
 		   /* TODO: var hypotheses: Map[Symbol, Hypothesis], */
-		   var statements: Map[String, Statement],
-		   val top: Boolean) {
+		   var statements: Map[String, Labelled],
+		   top: Boolean) {
   def push() = Context(
     symbols, statements, false)
 
   def pop(save_ctx: Context, db:Database): Database = {
-/*
     val assertions = db.statements filter {
-      case Statement(Labelled(_, _, a: Assertion)) => true
+      case Labelled(_, _, a: Assertion) => true
       case _ => false
     }
     statements = save_ctx.statements ++ (
-      assertions map {_.st.label} zip assertions)
+      (assertions map {_.label.name}) zip assertions)
     Database(assertions)
-*/
-    Database(List())
   }
 
   def add_constants(syms: List[String]) =
@@ -329,6 +303,27 @@ case class Context(var symbols: Map[String, MathSymbol],
 
   def active_symbols(xs: List[String]) =
     fold_either(xs map active_symbol)
+
+  def active_parts(expr: List[String]): Either[BadExpr,
+					       (Con, List[MathSymbol])] =
+    expr match {
+      case k :: sym :: syms => {
+	(active_constant(k), active_symbols(sym :: syms)) match {
+	  case (Right(k), Right(ss)) => Right((k, ss))
+	  case (Left(oops), _) => Left(oops)
+	  case (_, Left(oops)) => Left(oops)
+	}
+      }
+      case _ => Left(BadLength(expr))
+    }
+					       
+  def active_labels(labels: List[String]) =
+    fold_either(
+      for (l <- labels) yield (statements get l) match {
+	case Some(s) => Right(s)
+	case None => Left(BadLabel(l))
+      }
+    )
 
   def fold_either[L, R](ss: List[Either[L, R]]
 		      ): Either[L, List[R]] = ss match {
