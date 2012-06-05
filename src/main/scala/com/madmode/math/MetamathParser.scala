@@ -28,10 +28,10 @@ abstract class Preliminaries extends RegexParsers {
 		 | "$d" | "$a" | "$p" | "$." | "$="
 		 | "$(" | "$)" | "$[" | "$]" )
 
-  def label: Parser[Symbol] =
-    """[A-Za-z0-9\-_\.]+""".r ^^ { Symbol(_) }
-  def math_symbol: Parser[Symbol] =
-    ("[" + ascii_printable + """&&[^\$]]+""").r ^^ { Symbol(_) }
+  def label: Parser[String] =
+    """[A-Za-z0-9\-_\.]+""".r
+  def math_symbol: Parser[String] =
+    ("[" + ascii_printable + """&&[^\$]]+""").r
 }
 
 class Preprocessing extends Preliminaries
@@ -59,8 +59,8 @@ with lexical.Scanners {
 */
 
   def scoping_statement = block_start | block_end
-  def block_start = igc( "${") ^^^ BlockStart()
-  def block_end = igc( "$}") ^^^ BlockEnd()
+  def block_start = igc( "${" ) ^^^ BlockStart()
+  def block_end = igc( "$}" ) ^^^ BlockEnd()
 
   def statement =
     documentation.? ~! label.? ~! keyword7 ~! expression ~! proof.? <~ "$." ^^ {
@@ -92,11 +92,10 @@ with lexical.Scanners {
   case class BlockEnd
 		  extends ScopingStatement("$}")
   case class StatementParts(doc: Option[String],
-			    label: Option[Symbol],
+			    label: Option[String],
 			    kw: String,
-			    expr: List[Symbol],
-			    pf: Option[Proof])
-      extends StatementToken(kw)
+			    expr: List[String],
+			    pf: Option[Proof]) extends StatementToken(kw)
 
 /*@@@@@@
   case class ConstantDeclaration(cs: List[Symbol])
@@ -157,8 +156,8 @@ with lexical.Scanners {
 
   /** TODO: Proof.toString() */
   sealed abstract class Proof
-  case class CompressedProof(labels: List[Symbol], digits: String) extends Proof
-  case class ExplicitProof(labels: List[Symbol]) extends Proof
+  case class CompressedProof(labels: List[String], digits: String) extends Proof
+  case class ExplicitProof(labels: List[String]) extends Proof
 }
 
 
@@ -290,10 +289,10 @@ case class Statement(st: Int, aux: Int) {
 /**
  * not functional, but HmmImpl.hs seems to use the state monad...
  */
-case class Context(var symbols: Map[Symbol, MathSymbol],
+case class Context(var symbols: Map[String, MathSymbol],
 		   /* dvrs: List[DisjointVariables], TODO: refine */
 		   /* TODO: var hypotheses: Map[Symbol, Hypothesis], */
-		   var statements: Map[Symbol, Statement],
+		   var statements: Map[String, Statement],
 		   val top: Boolean) {
   def push() = Context(
     symbols, statements, false)
@@ -311,28 +310,28 @@ case class Context(var symbols: Map[Symbol, MathSymbol],
     Database(List())
   }
 
-  def add_constants(syms: List[Symbol]) =
+  def add_constants(syms: List[String]) =
     symbols = symbols ++ (syms zip (syms map { Con(_) }))
-  def add_variables(syms: List[Symbol]) =
+  def add_variables(syms: List[String]) =
     symbols = symbols ++ (syms zip (syms map { Var(_) }))
 
-  def active_symbol(x: Symbol): Either[BadSymbol, MathSymbol] =
+  def active_symbol(x: String): Either[BadSymbol, MathSymbol] =
     symbols get x match {
       case Some(sym) => Right(sym)
-      case None => Left(BadSymbol(x.name))
+      case None => Left(BadSymbol(x))
     }
-  def active_constant(x: Symbol) = 
+  def active_constant(x: String) = 
     symbols get x match {
       case Some(k @ Con(_)) => Right(k)
-      case _ => Left(BadSymbol(x.name))
+      case _ => Left(BadSymbol(x))
     }
-  def active_variable(x: Symbol) =
+  def active_variable(x: String) =
     symbols get x match {
       case Some(v @ Var(_)) => Right(v)
-      case _ => Left(BadSymbol(x.name))
+      case _ => Left(BadSymbol(x))
     }
 
-  def active_symbols(xs: List[Symbol]) =
+  def active_symbols(xs: List[String]) =
     fold_either(xs map active_symbol)
 
   def fold_either[L, R](ss: List[Either[L, R]]
@@ -351,8 +350,8 @@ object Context{
 
 
 sealed abstract class MathSymbol
-case class Var(n: Symbol) extends MathSymbol
-case class Con(s: Symbol) extends MathSymbol
+case class Var(n: String) extends MathSymbol
+case class Con(s: String) extends MathSymbol
 
 sealed abstract class BadName
 case class BadSymbol(sym: String) extends BadName

@@ -26,8 +26,8 @@ riage return, line feed, and form feed.""") {
 	case p.NoSuccess(failure, _) => failure
       }
       parts should equal (
-	p.StatementParts(None,Some(Symbol("axiom.1")),"$a",
-			 List(Symbol("|-"), 'x, Symbol("="), 'x),None)
+	p.StatementParts(None,Some("axiom.1"),"$a",
+			 List("|-", "x", "=", "x"),None)
       )
     }
 
@@ -49,7 +49,7 @@ riage return, line feed, and form feed.""") {
      )
     {
       val l = p.parseAll(p.token, "letters09-_. $a k expr $.") match {
-	case p.Success(p.StatementParts(_, Some(Symbol(txt)), _, _, _), _) =>
+	case p.Success(p.StatementParts(_, Some(txt), _, _, _), _) =>
 	  txt
 	case fail @ p.NoSuccess(_, _) => fail
       }
