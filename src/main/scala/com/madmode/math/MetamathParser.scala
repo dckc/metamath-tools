@@ -45,14 +45,15 @@ with lexical.Scanners {
     ("(?:[" + allowed_range + """&&[^\$]]|\$["""
      + allowed_range + """&&[^\)]])*""").r
     ~! "$)"
-  ) ^^ { case start ~ content ~ end => start + content + end }
+  ) ^^ { case start ~ content ~ end => content }
 
   /** ignore comments */
-  def igc[T](p: => Parser[T]): Parser[T] = (comment.*) ~> p
-
   /** TODO: lexically include files */
-  def file_inclusion_command = igc("$[" ~> filename <~ "$]") ^^ {
-    case filename => filename }
+  def igc[T](p: => Parser[T]): Parser[T] =
+    ((comment | file_inclusion_command).*) ~> p
+
+  def file_inclusion_command = "$[" ~! filename ~! "$]" ^^ {
+    case open ~ filename ~ close => filename }
   def filename = ("[" + ascii_printable + """&&[^\$]]+""").r
 
   def scoping_statement = block_start | block_end
@@ -60,7 +61,8 @@ with lexical.Scanners {
   def block_end = igc( "$}" ) ^^^ BlockEnd()
 
   def statement =
-    documentation.? ~! label.? ~! keyword7 ~! expression ~! proof.? <~ "$." ^^ {
+    (documentation.? ~! igc(label).?
+     ~! keyword7 ~! expression ~! proof.?) <~ "$." ^^ {
       case doc ~ label ~ kw ~ expr ~ pf =>
 	StatementParts(doc, label, kw, expr, pf)
     }
@@ -68,7 +70,7 @@ with lexical.Scanners {
   def documentation: Parser[String] =
     (comment ~> documentation) | comment
 
-  def keyword7 = ("$c" | "$v" | "$f" | "$e" | "$d" | "$a" | "$p")
+  def keyword7 = igc("$c" | "$v" | "$f" | "$e" | "$d" | "$a" | "$p")
   def expression = igc(math_symbol) *
 
   def proof: Parser[Proof] = "$=" ~> (

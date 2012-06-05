@@ -33,16 +33,28 @@ riage return, line feed, and form feed.""") {
 
     it("""The set of keyword tokens is ${, $}, $c, $v, $f, $e, $d, $a,
        $p, $., $=, $(, $), $[, and $]. The last four are called
-       auxiliary or preprocessing keywords. """) (pending) /*{
-      val parts = p.parseAll(p.tokens,
-			      "${ $} $c $v $f $e $d $a $p $. $=") match {
-	case p.Success(result, _) => result
-	case p.NoSuccess(failure, _) => failure
+       auxiliary or preprocessing keywords. """) {
+      def check(txt: String) = {
+	p.parseAll(p.token, txt) match {
+	  case p.Success(p.BlockStart(), _) => "${"
+	  case p.Success(p.BlockEnd(), _) => "$}"
+	  case p.Success(p.StatementParts(_, _, kw, _, _), _) => kw
+	  case other => other
+	}
       }
-      parts should equal (List("${", "$}", "$c", "$v", "$f", "$e",
-			       "$d", "$a", "$p", "$.", "$="))
+      check("${") should equal ("${")
+      check("$}") should equal ("$}")
+      check("$c x $.") should equal ("$c")
+      check("$v x $.") should equal ("$v")
+      check("label $f k x $.") should equal ("$f")
+      check("label $e k x $.") should equal ("$e")
+      check("$d v0 v1 $.") should equal ("$d")
+      check("label $a k x $.") should equal ("$a")
+      check("label $p k x $= step $.") should equal ("$p")
+
+      check("$( doc $) label $a k $( ig $) x $.") should equal ("$a")
+      check("$[ file $] $c x $.") should equal ("$c")
     }
-    */
 
     it("""A label token consists of any combination of
        letters, digits, and the characters hyphen, underscore, and period."""
@@ -62,7 +74,6 @@ riage return, line feed, and form feed.""") {
       notl.toString() should equal ("1.7")
     }
 
-    /*
     it("""A math symbol token may consist of any combination of the 93
           printable standard ascii characters other than $ .""") {
       val sym = p.parseAll(p.math_symbol, "|-") match {
@@ -80,8 +91,19 @@ riage return, line feed, and form feed.""") {
       sym should equal ("case-SENSITIVE")
     }
 
-    */
   }
+
+  describe("extension: statement comments") {
+    val p = new Preprocessing()
+
+    it("""A comment before a statement is captured as a docstring""") {
+      (p.parseAll(p.token, "$( doc $) label $a k x $.") match {
+	case p.Success(p.StatementParts(Some(doc), _, _, _, _), _) => doc
+	case other => other
+      }) should equal ( "doc " )
+    }
+  }
+  
 }
 
 /*
