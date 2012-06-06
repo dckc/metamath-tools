@@ -74,7 +74,7 @@ with lexical.Scanners {
   def expression = igc(math_symbol) *
 
   def proof: Parser[Proof] = "$=" ~> (
-    (igc("(") ~> igc(label) .+  <~ igc(")") ) ~ ("[A-Z" + ws_char + "]").r ^^ {
+    (igc("(") ~> igc(label) .*  <~ igc(")") ) ~ ("[A-Z" + ws_char + "]").r ^^ {
       case labels ~ digits => Proof(labels, Some(digits))
     }
     | igc(label) .+ ^^ { case labels => Proof(labels, None) }
@@ -103,6 +103,9 @@ case class Proof(labels: List[String], digits: Option[String])
 class BasicSyntax extends syntactical.TokenParsers {
   def parse[T](p: Parser[T], in: String) =
     p(new lexical.Scanner(in))
+
+  def parseAll[T](p: Parser[T], in: String) =
+    parse(phrase(p), in)
 
   override type Tokens = Preprocessing
   /** TODO: consider moving to constructor arg */
@@ -154,7 +157,11 @@ class BasicSyntax extends syntactical.TokenParsers {
   def labelled_statement: Parser[Database] = acceptMatch("labelled", {
     case ls @ lexical.StatementParts(doc, Some(label), kw, expr, pf) =>
       (doc, label, in_context(kw, expr, pf)) }) ^? ({
-	case (doc, label, Right(e)) => d1(Labelled(doc, Symbol(label), e))
+	case (doc, label, Right(e)) => {
+	  val ls = Labelled(doc, Symbol(label), e)
+	  ctx.add_statement(ls)
+	  d1(ls)
+	}
       }, {
 	case (_, _, Left(oops)) => oops.toString()
       })
@@ -285,6 +292,9 @@ case class Context(var symbols: Map[String, MathSymbol],
       (assertions map {_.label.name}) zip assertions)
     Database(assertions)
   }
+
+  def add_statement(s: Labelled) =
+    statements = statements + (s.label.name -> s)
 
   def add_constants(syms: List[String]) =
     symbols = symbols ++ (syms zip (syms map { Con(_) }))

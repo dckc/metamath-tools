@@ -134,7 +134,7 @@ class TestBasicSyntax extends FunSpec with ShouldMatchers {
       val bs = new BasicSyntax()
       bs.ctx.add_constants(List("|-", "="))
       bs.ctx.add_variables(List("x"))
-      val db = bs.parse(bs.statements, "axiom.1 $a |- x = x $.") match {
+      val db = bs.parseAll(bs.statements, "axiom.1 $a |- x = x $.") match {
 	case bs.Success(db, _) => db
 	case other => other
       }
@@ -143,9 +143,7 @@ class TestBasicSyntax extends FunSpec with ShouldMatchers {
 			       Axiom(Con("|-"),
 				     List(Var("x"), Con("="), Var("x")))))) )
     }
-  }
 
-/*
     it("${ begins a block and a matching $} ends the block.") {
       val bs = new BasicSyntax()
       val db = bs.parseAll(bs.statements, "${ $} ${ ${ $} $}") match {
@@ -220,12 +218,12 @@ class TestBasicSyntax extends FunSpec with ShouldMatchers {
 	case other => other
       }
       stmts should equal (
-	List(Statement("stmt1", VariableType(Con("wff"), Var("P"))),
-	     Statement("stmt2", VariableType(Con("set"), Var("x"))),
-	     Statement("stmt3", Logical(Con("|-"),
-					List(Con("("), Var("P"),
-					     Con("->"), Var("Q"),
-					     Con(")"))))
+	List(Labelled(None, 'stmt1, VariableType(Con("wff"), Var("P"))),
+	     Labelled(None, 'stmt2, VariableType(Con("set"), Var("x"))),
+	     Labelled(None, 'stmt3, Logical(Con("|-"),
+				       List(Con("("), Var("P"),
+					    Con("->"), Var("Q"),
+					    Con(")"))))
 	   ) )
     }
 
@@ -249,22 +247,22 @@ class TestBasicSyntax extends FunSpec with ShouldMatchers {
 	case bs.Success((ctx, Database(stmts)), _) => stmts
 	case other => other
       }
-      val wp = Statement("wp",VariableType(Con("wff"),Var("p")))
-      val wq = Statement("wq",VariableType(Con("wff"),Var("q")))
-      val wr = Statement("wr",VariableType(Con("wff"),Var("r")))
-      val ws = Statement("ws",VariableType(Con("wff"),Var("s")))
-      val w2 = Statement("w2",
-			 Axiom(Con("wff"),
-			       List(Con("("),
-				    Var("p"), Con("->"), Var("q"),
-				    Con(")"))))
-      val wnew = Statement("wnew",
+      val wp = Labelled(None, 'wp,VariableType(Con("wff"),Var("p")))
+      val wq = Labelled(None, 'wq,VariableType(Con("wff"),Var("q")))
+      val wr = Labelled(None, 'wr,VariableType(Con("wff"),Var("r")))
+      val ws = Labelled(None, 'ws,VariableType(Con("wff"),Var("s")))
+      val w2 = Labelled(None, 'w2,
+			Axiom(Con("wff"),
+			      List(Con("("),
+				   Var("p"), Con("->"), Var("q"),
+				   Con(")"))))
+      val wnew = Labelled(None, 'wnew,
 			   Theorem(Con("wff"),
 				   List(Con("("),
 					Var("s"), Con("->"), Con("("),
 					Var("r"), Con("->"), Var("p"),
 					Con(")"), Con(")")),
-				   List(ws, wr, wp, w2, w2)))
+				   List(ws, wr, wp, w2, w2), None))
       stmts should equal (List(wp, wq, wr, ws, w2, wnew))
     }
 
@@ -316,12 +314,12 @@ class TestBasicSyntax extends FunSpec with ShouldMatchers {
 			      """
 			    ) match {
 	case bs.Success((ctx, Database(
-	  List(Statement(l, Theorem(Con(mark), _, _))) )), _) => (l, mark)
+	  List(Labelled(None, l, Theorem(Con(mark), _, _, _))) )), _) =>
+	    (l, mark)
 	case other => other
       }
       stmts should equal (
-	("dummylink", "|-") )
+	('dummylink, "|-") )
     }
   }
-*/
 }
