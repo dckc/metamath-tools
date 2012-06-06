@@ -85,9 +85,9 @@ with lexical.Scanners {
   }
   sealed abstract class ScopingStatement(kw: String)
 		  extends StatementToken(kw)
-  case class BlockStart
+  case class BlockStart()
 		  extends ScopingStatement("${")
-  case class BlockEnd
+  case class BlockEnd()
 		  extends ScopingStatement("$}")
   case class StatementParts(doc: Option[String],
 			    label: Option[String],
@@ -101,6 +101,9 @@ with lexical.Scanners {
 case class Proof(labels: List[String], digits: Option[String])
 
 class BasicSyntax extends syntactical.TokenParsers {
+  def parse[T](p: Parser[T], in: String) =
+    p(new lexical.Scanner(in))
+
   override type Tokens = Preprocessing
   /** TODO: consider moving to constructor arg */
   override val lexical = new Preprocessing

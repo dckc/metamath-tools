@@ -1,9 +1,9 @@
 package com.madmode.math
 
-import org.scalatest.Spec
+import org.scalatest.FunSpec
 import org.scalatest.matchers.ShouldMatchers
 
-class TestPreliminaries extends Spec with ShouldMatchers {
+class TestPreliminaries extends FunSpec with ShouldMatchers {
   describe("4.1.1 Preliminaries") {
     val p = new Preprocessing()
 
@@ -106,7 +106,7 @@ riage return, line feed, and form feed.""") {
   
 }
 
-class TestPreprocessing extends Spec with ShouldMatchers {
+class TestPreprocessing extends FunSpec with ShouldMatchers {
   describe("4.1.2 Preprocessing") {
     val p = new Preprocessing()
 
@@ -127,24 +127,21 @@ class TestPreprocessing extends Spec with ShouldMatchers {
   }
 }
 
-class TestBasicSyntax extends Spec with ShouldMatchers {
+class TestBasicSyntax extends FunSpec with ShouldMatchers {
   describe("4.1.3 Basic Syntax") {
     it("""After preprocessing, a database will consist of a sequence
        of statements.  """) {
       val bs = new BasicSyntax()
       bs.ctx.add_constants(List("|-", "="))
       bs.ctx.add_variables(List("x"))
-      println("@@bs.lexical.Scanner")
-      val s = new bs.lexical.Scanner("axiom.1 $a |- x = x $.")
-      println("@@first: " + s.first)
-      val db = bs.statement(s) match {
+      val db = bs.parse(bs.statements, "axiom.1 $a |- x = x $.") match {
 	case bs.Success(db, _) => db
 	case other => other
       }
       db should equal (
 	Database(List(Labelled(None, Symbol("axiom.1"),
-				Axiom(Con("|-"),
-				      List(Var("x"), Con("="), Var("x")))))) )
+			       Axiom(Con("|-"),
+				     List(Var("x"), Con("="), Var("x")))))) )
     }
   }
 
