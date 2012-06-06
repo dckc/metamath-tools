@@ -23,29 +23,37 @@ abstract class Preliminaries extends RegexParsers {
   /* WIERD! putting allowed_range before ascii_printable causes it to
    * get the value "nullnull". */
   val ascii_printable = "\u0021-\u007f"
+  val ascii_printable_but_dollar = "\u0021-\u0023\u0025-\u007f"
+  val ascii_printable_but_cparen = "\u0021-\u0028\u002A-\u007f"
   def ws_char = " \t\r\n\f"
   val allowed_range = ascii_printable + ws_char
 
   def label: Parser[String] =
     """[A-Za-z0-9\-_\.]+""".r
   def math_symbol: Parser[String] =
-    ("[" + ascii_printable + """&&[^\$]]+""").r
+    ("[" + ascii_printable_but_dollar + """]+""").r
 }
 
 class Preprocessing extends Preliminaries
 with token.Tokens
 with lexical.Scanners {
   override type Elem = Char
-  override def token = scoping_statement | statement
+  override def token = scoping_statement | statement | eof
 
   override def whitespace = ("[" + ws_char + "]*").r
 
+  var last_comment: Option[String] = None
   def comment = (
     "$(" ~!
-    ("(?:[" + allowed_range + """&&[^\$]]|\$["""
-     + allowed_range + """&&[^\)]])*""").r
+    ("(?:[" + ws_char + ascii_printable_but_dollar + "]|" +
+     """(?:\$[""" + ws_char + ascii_printable_but_cparen + """]))*+""").r
     ~! "$)"
-  ) ^^ { case start ~ content ~ end => content }
+  ) ^^ {
+    case start ~ content ~ end => {
+      last_comment = Some(content)
+      ""
+    }
+  }
 
   /** ignore comments */
   /** TODO: lexically include files */
@@ -61,24 +69,27 @@ with lexical.Scanners {
   def block_end = igc( "$}" ) ^^^ BlockEnd()
 
   def statement =
-    (documentation.? ~! igc(label).?
-     ~! keyword7 ~! expression ~! proof.?) <~ "$." ^^ {
-      case doc ~ label ~ kw ~ expr ~ pf =>
-	StatementParts(doc, label, kw, expr, pf)
+    (igc(label).? ~! keyword7 ~! expression ~! proof.?) <~ "$." ^^ {
+      case label ~ kw ~ expr ~ pf => {
+	val s = StatementParts(last_comment, label, kw, expr, pf)
+	last_comment = None
+	s
+      }
     }
-
-  def documentation: Parser[String] =
-    (comment ~> documentation) | comment
+  def statements = commit(token).* /* for testing; not used in token */
 
   def keyword7 = igc("$c" | "$v" | "$f" | "$e" | "$d" | "$a" | "$p")
   def expression = igc(math_symbol) *
 
   def proof: Parser[Proof] = "$=" ~> (
-    (igc("(") ~> igc(label) .*  <~ igc(")") ) ~ ("[A-Z" + ws_char + "]").r ^^ {
+    (igc("(") ~> igc(label) .*  <~ igc(")") ) ~ ("[A-Z" + ws_char + "]+").r ^^ {
       case labels ~ digits => Proof(labels, Some(digits))
     }
     | igc(label) .+ ^^ { case labels => Proof(labels, None) }
   )
+
+  def eof =
+    comment.* ^^^ EOF
 
   sealed abstract class StatementToken(kw: String) extends Token{
     def chars = kw
@@ -104,7 +115,13 @@ class BasicSyntax extends syntactical.TokenParsers {
   def parse[T](p: Parser[T], in: String) =
     p(new lexical.Scanner(in))
 
+  def parse[T](p: Parser[T], in: java.io.Reader) =
+    p(new lexical.Scanner(new PagedSeqReader(PagedSeq.fromReader(in))))
+
   def parseAll[T](p: Parser[T], in: String) =
+    parse(phrase(p), in)
+
+  def parseAll[T](p: Parser[T], in: java.io.Reader) =
     parse(phrase(p), in)
 
   override type Tokens = Preprocessing
@@ -373,7 +390,7 @@ case class BadLength(syms: List[String]) extends BadExpr
 case class MissingProof() extends BadExpr
 case class UnexpectedProof(kw: String) extends BadExpr
 
-/*@@@@@
+
 object Utility extends App {
   def reader(filename: String) = {
     val bytes_in = new FileInputStream(filename)
@@ -388,32 +405,33 @@ object Utility extends App {
     }
 
     val infn = args(1)
-    val bs = new BasicSyntax()
+    val p = new Preprocessing()
 
     println("tokenize:")
-    bs.parseAll(bs.statements_lex, reader(infn)) match {
-      case bs.Success(stmts, _) => {
+    p.parseAll(p.statements, reader(infn)) match {
+      case p.Success(stmts, _) => {
 	println("statements: " + stmts.length)
       }
-      case bs.NoSuccess(failure, rest) => {
-	println(failure)
-	println(rest.pos)
+      case ns @ p.NoSuccess(_, _) => {
+	println(ns)
       }
     }
 
+    val bs = new BasicSyntax()
     println("parse:")
     bs.parseAll(bs.database, reader(infn)) match {
       case bs.Success((ctx, db), _) => {
 	println("Context symbols: " + ctx.symbols.size)
-	println("Context hypotheses: " + ctx.hypotheses.size)
+	/*println("Context hypotheses: " + ctx.hypotheses.size)*/
 	println("Context statements: " + ctx.statements.size)
 	println("Database statements: " + db.statements.length)
+
+	for (s <- db.statements.take(20))
+	  println(s)
       }
-      case bs.NoSuccess(failure, rest) => {
-	println(failure)
-	println(rest.pos)
+      case ns @ bs.NoSuccess(_, _) => {
+	println(ns)
       }
     }
   }
 }
-*/

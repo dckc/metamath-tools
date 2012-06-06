@@ -113,9 +113,10 @@ class TestPreprocessing extends FunSpec with ShouldMatchers {
     it("""Comments are ignored (treated like white space) for the
        purpose of parsing."""  ) {
       val parts = p.parseAll(p.token,
-			     "axiom.1 $a $( turnstile $) |- x = x $.") match {
+			     """axiom.1 $a $( turnstile $) |- x = x $.
+			     $( end $)""") match {
 	case p.Success(result, _) => result
-	case p.NoSuccess(failure, _) => failure
+	case ns @ p.NoSuccess(_, _) => ns
       }
       parts should equal (
 	p.StatementParts(None,Some("axiom.1"),"$a",
@@ -308,7 +309,7 @@ class TestBasicSyntax extends FunSpec with ShouldMatchers {
 			        dummylink.2 $e |- ps $.
 			      
 			        dummylink $p |- ph $=
-				  (  ) C $.
+				  (  ) CC $.
 			      $( [7-Feb-2006] $)
 			      $}
 			      """
