@@ -18,6 +18,35 @@ import scala.collection.immutable.PagedSeq
 import scala.util.parsing.input.{PagedSeqReader}
 import java.io.{InputStreamReader,FileInputStream}
 
+import org.parboiled.scala._
+import org.parboiled.errors.{ErrorUtils, ParsingException}
+
+abstract class PreliminariesPEG extends Parser {
+
+  def ascii_printable =
+    rule { "\u0021" - "\u007f" }
+  def ascii_printable_but_dollar =
+    rule { ("\u0021"-"\u0023") | ("\u0025"-"\u007f") }
+  def ascii_printable_but_cparen =
+    rule { ("\u0021"-"\u0028") | ("\u002A"-"\u007f") }
+  def ws_char =
+    rule { " " | "\t" | "\r" | "\n" | "\f" }
+  def allowed_range =
+    rule { ascii_printable | ws_char }
+
+  def label: Rule1[String] =
+    rule { oneOrMore(letter | digit | "-" | "_" | ".") } ~> (s => s)
+  def letter =
+    rule { ("A" - "Z") | ("a" - "z") }
+  def digit =
+    rule { "0" - "9" }
+
+  def math_symbol: Rule1[String] =
+    rule { oneOrMore(ascii_printable_but_dollar) } ~> ( s => s )
+}
+
+
+
 abstract class Preliminaries extends RegexParsers {
 
   /* WIERD! putting allowed_range before ascii_printable causes it to
@@ -33,6 +62,94 @@ abstract class Preliminaries extends RegexParsers {
   def math_symbol: Parser[String] =
     ("[" + ascii_printable_but_dollar + """]+""").r
 }
+
+class PreprocessingPEG extends PreliminariesPEG {
+  // TODO: EOF
+  def thingy = scoping_statement | statement
+  def statements = zeroOrMore(thingy) /* for testing; not used in token */
+
+  def whitespace: Rule0 =
+    rule { oneOrMore(ws_char) }
+
+  var last_comment: Option[String] = None
+  def comment: Rule0 = (
+    "$(" ~
+    zeroOrMore(( ws_char | ascii_printable_but_dollar )
+	       | ("$" ~ ( ws_char | ascii_printable_but_cparen ) ))
+    ~% { case content => last_comment = Some(content) }
+    ~ "$)"
+  )
+
+  /** ignore whitespace and comments */
+  /** TODO: lexically include files */
+  def igc[T](p: => Rule1[T]): Rule1[T] =
+    zeroOrMore(whitespace | comment | file_inclusion_command) ~ p
+  def igc(p: => Rule0): Rule0 =
+    zeroOrMore(whitespace | comment | file_inclusion_command) ~ p
+
+  def file_inclusion_command = rule { "$[" ~ filename ~ "$]" }
+  def filename = rule { oneOrMore(ascii_printable_but_dollar) }
+
+  def scoping_statement = block_start | block_end
+  def block_start = igc( "${" ) ~> ( input => BlockStart() )
+  def block_end = igc( "$}" ) ~> ( input => BlockEnd() )
+
+  def statement =
+    (label_kw_expr ~ optional(proof) ~ "$." ) ~~> {
+      (lke: (Option[String], String, List[String]),
+       pf: Option[Proof]) => {
+	lke match {
+	  case (label, kw, expr) =>
+	    val s = StatementParts(last_comment, label, kw, expr, pf)
+	  last_comment = None
+	  s
+	}
+      }
+    }
+
+  /* seems we can only pop 3 off the stack at a time. */
+  def label_kw_expr =
+    rule { (optional(label /*TODO igc()*/) ~ keyword7 ~ expression) ~~>
+	  { (label_opt: Option[String], kw: String, expr: List[String]) =>
+	    (label_opt, kw, expr) }
+	}
+
+  // TODO: igc()
+  def keyword7: Rule1[String] = rule {
+    ("$c" | "$v" | "$f" | "$e" | "$d" | "$a" | "$p") ~> (s => s)
+  }
+  def expression: Rule1[List[String]] = rule {
+    zeroOrMore(math_symbol, whitespace | comment)
+  }
+
+  def proof: Rule1[Proof] =
+    rule { "$=" ~ (
+      (igc("(") ~ zeroOrMore(igc(label)) ~ igc(")") ~
+       oneOrMore( ("A" - "Z") | ws_char ) ~> (s => s)) ~~> {
+	(labels: List[String], digits: String) =>
+	  Proof(labels, Some(digits))
+      }
+      | oneOrMore(igc(label)) ~~> {
+	labels: List[String] => Proof(labels, None) }
+    ) }
+
+  sealed abstract class StatementToken(kw: String) {
+    def chars = kw
+  }
+  sealed abstract class ScopingStatement(kw: String)
+		  extends StatementToken(kw)
+  case class BlockStart()
+		  extends ScopingStatement("${")
+  case class BlockEnd()
+		  extends ScopingStatement("$}")
+  case class StatementParts(doc: Option[String],
+			    label: Option[String],
+			    kw: String,
+			    expr: List[String],
+			    pf: Option[Proof]) extends StatementToken(kw)
+
+}
+
 
 class Preprocessing extends Preliminaries
 with token.Tokens
@@ -398,6 +515,22 @@ object Utility extends App {
     chars_in
   }
 
+  def minline(r: InputStreamReader): String = {
+    val br = new java.io.BufferedReader(r)
+    val lines: Stream[String] = {
+      def loop(): Stream[String] = {
+	val l = br.readLine()
+	if (l == null) {
+	  Stream[String]()
+	} else {
+	  l #:: loop()
+	}
+      }
+      loop()
+    }
+    lines.max
+  }
+
   override def main(args: Array[String]) {
     if (args.length != 2) {
       println("Usage: parser input_file")
@@ -405,6 +538,10 @@ object Utility extends App {
     }
 
     val infn = args(1)
+
+    println("decode:")
+    println(minline(reader(infn)))
+
     val p = new Preprocessing()
 
     println("tokenize:")
