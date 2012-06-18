@@ -3,6 +3,40 @@ package com.madmode.math
 import org.scalatest.FunSpec
 import org.scalatest.matchers.ShouldMatchers
 
+import org.parboiled.scala._
+
+class TestPreliminariesPEG extends FunSpec with ShouldMatchers {
+  describe("4.1.1 Preliminaries") {
+    val p = new PreprocessingPEG()
+
+    it("""The only characters that are allowed to appear in a Metamath
+source file are the 94 printable characters on standard ascii keyboards ...
+plus the following non-printable (white space) characters: space, tab, car-
+riage return, line feed, and form feed.""") {
+
+      val r = ReportingParseRunner(p.comment).run("$( x \u0000 is not allowed $)")
+      val s = r.result match {
+	case Some(x) => x
+	case None => r.parseErrors(0).getEndIndex() //  getEndIndex
+      }
+      s should equal (6)
+    }
+
+    it("""A Metamath database consists of a sequence of three kinds of tokens
+       separated by white space.""") {
+      val r = ReportingParseRunner(p.statements).run("axiom.1 $a |- x = x $.")
+      val parts = r.result match {
+	case Some(result) => result
+	case None => r.parseErrors
+      }
+      parts should equal (
+	p.StatementParts(None,Some("axiom.1"),"$a",
+			 List("|-", "x", "=", "x"),None)
+      )
+    }
+  }
+}
+
 class TestPreliminaries extends FunSpec with ShouldMatchers {
   describe("4.1.1 Preliminaries") {
     val p = new Preprocessing()
