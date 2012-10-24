@@ -13,7 +13,8 @@ info: central/rparse (0188129D-F459-4EA4-A928-A5BA5632EF2E) [parse, parsing]
 https://github.com/jesse99/rparse
 */
 extern mod rparse;
-use rparse::{Parser, ParseFailed, Combinators, match1, ret};
+use rparse::{Parser, ParseFailed, Combinators, StringParsers, EOT,
+             ret, match1, match0, scan };
 
 mod preprocessing {
     pub type Ranges = &[(char, char)];
@@ -39,6 +40,33 @@ mod preprocessing {
 
     pub fn math_symbol() -> Parser<@~str> {
         match1(|ch| { any_range(ch, ascii_printable_but_dollar) }) }
+
+    //TODO var last_comment: Option[String] = None
+      
+    pure fn to_close(chars: @[char], index: uint) -> uint {
+        enum S { Start, Dollar };
+        let mut state = Start;
+        let mut i = 0;
+        loop {
+            let ch = chars[index + i];
+            if (ch == EOT) { return i }
+            state = match state {
+              Start => match ch {
+                '$' => Dollar,
+                _ => state
+              },
+              Dollar => match ch {
+                ')' => return i,
+                _ => Start
+              }
+            };
+            i = i + 1;
+        }
+    }
+
+    pub fn comment() -> Parser<@~str> {
+        "$(".lit().then(scan(to_close))
+    }
 }
                
 #[cfg(test)]
@@ -75,26 +103,26 @@ mod test_preliminaries {
             .parse(@~"some_file", @"<$>");
         assert actual.is_err();
     }
-}
 
-/*
-    let p = Preprocessing()
 
     /** The only characters that are allowed to appear in a Metamath
     source file are the 94 printable characters on standard ascii
     keyboards ...  plus the following non-printable (white space)
     characters: space, tab, car- riage return, line feed, and form
-    feed.*@@/
+    feed.*/
     #[test]
     fn bad_char() {
-      val r = ReportingParseRunner(p.comment).run("$( x \u0000 is not allowed $)")
-      val s = r.result match {
-	case Some(x) => x
-	case None => r.parseErrors(0).getEndIndex() //  getEndIndex
-      }
-      s should equal (6)
+        let actual = comment()
+            .everything(space())
+            .parse(@~"f", @"$( x \u0000 is not allowed $)");
+        match actual {
+	  Ok(_) => fail,
+	  // Err(ParseFailed{file: f, line: y, col: x, mesg: txt}) => assert x == 6
+          Err(_) => ()
+        }
     }
-
+}
+/*
     it("""A Metamath database consists of a sequence of three kinds of tokens
        separated by white space.""") {
       val r = ReportingParseRunner(p.statements).run("axiom.1 $a |- x = x $.")
