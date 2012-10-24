@@ -13,27 +13,67 @@ info: central/rparse (0188129D-F459-4EA4-A928-A5BA5632EF2E) [parse, parsing]
 https://github.com/jesse99/rparse
 */
 extern mod rparse;
-use rparse::{Parser, ParseFailed, match1, Combinators};
+use rparse::{Parser, ParseFailed, Combinators, match1, ret};
 
 mod preprocessing {
+    pub type Ranges = &[(char, char)];
+    pure fn any_range(ch: char, ranges: Ranges) -> bool {
+        any(ranges,
+            |r| { match r { &(lo, hi) => ch >= lo && ch <= hi } })
+    }
+
+    pub const ascii_printable: Ranges = &[('\u0021', '\u007f')];
+    pub const ascii_printable_but_dollar: Ranges =
+        &[('\u0021', '\u0023'), ('\u0025', '\u007f')];
+    pub const ascii_printable_but_cparen: Ranges =
+        &[('\u0021', '\u0028'), ('\u002A', '\u007f')];
+    pub const ws_char: &str = &" \t\r\n\x0A";
+    pub const label_extra: &str = &"'-_.";
+
     pub fn label() -> Parser<@~str> {
         match1(|ch| {  // why isn't match1 pure?
-            any([('A', 'Z'), ('a', 'z'), ('0', '9')],
-                |r| { match r { &(lo, hi) => ch >= lo && ch <= hi }
-                }) || any(['-', '_', '.'], |c| { ch == *c })
+            any_range(ch, [('A', 'Z'), ('a', 'z'), ('0', '9')])
+                || label_extra.contains_char(ch)
         })
     }
+
+    pub fn math_symbol() -> Parser<@~str> {
+        match1(|ch| { any_range(ch, ascii_printable_but_dollar) }) }
 }
                
 #[cfg(test)]
 // 4.1.1 Preliminaries
 mod test_preliminaries {
+    use mod preprocessing::*;
+
     #[test]
     fn simple_label() {
-        match preprocessing::label().parse(@~"some_file", @"label1") {
-          Ok(@x) => assert x == ~"label1",
-          Err(_) => fail
-        }
+        let actual = label().parse(@~"some_file", @"label1");
+        assert *actual.get() == ~"label1";
+    }
+
+    #[test]
+    fn bad_label() {
+        let actual = label().parse(@~"some_file", @"<X>");
+        assert actual.is_err();
+    }
+
+    fn space() -> Parser<@~str> { ret(@~"") }
+
+    #[test]
+    fn simple_symbol() {
+        let actual = math_symbol()
+            .everything(space())
+            .parse(@~"some_file", @"<*>");
+        assert *actual.get() == ~"<*>";
+    }
+
+    #[test]
+    fn bad_symbol() {
+        let actual = math_symbol()
+            .everything(space())
+            .parse(@~"some_file", @"<$>");
+        assert actual.is_err();
     }
 }
 
