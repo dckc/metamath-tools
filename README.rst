@@ -17,6 +17,14 @@ One idea:
 
   - proof assistant using angular.js
 
+Performance of the scala implementation was pretty bad; as I recall,
+it took about 20 minutes to parse what the original C version parses
+in a few seconds.
+
+I'm picking up the project again since discovering rust__.
+
+__ http://www.rust-lang.org/
+
 background/context:
 
  - `Saying Goodbye to Moore Method math notes and Robert Miner`__
