@@ -1,4 +1,6 @@
 /** @@docstring
+
+http://en.wikipedia.org/wiki/Parser_combinator
  */
 #[link(name="mmparse", vers="0.1", author="Dan Connolly")]
 
@@ -17,20 +19,6 @@ use rparse::{Parser, ParseFailed, Combinators, StringParsers, EOT,
              ret, match1, match0, scan };
 
 mod preprocessing {
-    pub type Ranges = &[(char, char)];
-    pure fn any_range(ch: char, ranges: Ranges) -> bool {
-        any(ranges,
-            |r| { match r { &(lo, hi) => ch >= lo && ch <= hi } })
-    }
-
-    pub const ascii_printable: Ranges = &[('\u0021', '\u007f')];
-    pub const ascii_printable_but_dollar: Ranges =
-        &[('\u0021', '\u0023'), ('\u0025', '\u007f')];
-    pub const ascii_printable_but_cparen: Ranges =
-        &[('\u0021', '\u0028'), ('\u002A', '\u007f')];
-    pub const ws_char: &str = &" \t\r\n\x0A";
-    pub const label_extra: &str = &"'-_.";
-
     pub fn label() -> Parser<@~str> {
         match1(|ch| {  // why isn't match1 pure?
             any_range(ch, [('A', 'Z'), ('a', 'z'), ('0', '9')])
@@ -41,6 +29,9 @@ mod preprocessing {
     pub fn math_symbol() -> Parser<@~str> {
         match1(|ch| { any_range(ch, ascii_printable_but_dollar) }) }
 
+    pub fn comment() -> Parser<@~str> {
+        "$(".lit().then(scan(to_close))
+    }
     //TODO var last_comment: Option[String] = None
       
     pure fn to_close(chars: @[char], index: uint) -> uint {
@@ -64,9 +55,19 @@ mod preprocessing {
         }
     }
 
-    pub fn comment() -> Parser<@~str> {
-        "$(".lit().then(scan(to_close))
+    type Ranges = &[(char, char)];
+    pure fn any_range(ch: char, ranges: Ranges) -> bool {
+        any(ranges,
+            |r| { match r { &(lo, hi) => ch >= lo && ch <= hi } })
     }
+
+    const ascii_printable: Ranges = &[('\u0021', '\u007f')];
+    const ascii_printable_but_dollar: Ranges =
+        &[('\u0021', '\u0023'), ('\u0025', '\u007f')];
+    const ascii_printable_but_cparen: Ranges =
+        &[('\u0021', '\u0028'), ('\u002A', '\u007f')];
+    const ws_char: &str = &" \t\r\n\x0A";
+    const label_extra: &str = &"'-_.";
 }
                
 #[cfg(test)]
