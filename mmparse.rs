@@ -19,39 +19,70 @@ use rparse::{Parser, ParseFailed, Combinators, StringParsers, EOT,
              ret, match1, match0, scan };
 
 mod preprocessing {
+    pub fn space() -> Parser<@~str> { match0(|ch| ws_char.contains_char(ch)) }
+
     pub fn label() -> Parser<@~str> {
         match1(|ch| {  // why isn't match1 pure?
             any_range(ch, [('A', 'Z'), ('a', 'z'), ('0', '9')])
                 || label_extra.contains_char(ch)
-        })
+        }).s0()
+    }
+
+    pure fn in_range_str(ch: char, r: Ranges, extra: &str) -> bool {
+        any_range(ch, r) || extra.contains_char(ch)
     }
 
     pub fn math_symbol() -> Parser<@~str> {
-        match1(|ch| { any_range(ch, ascii_printable_but_dollar) }) }
+        match1(|ch| { any_range(ch, ascii_printable_but_dollar) }).s0()
+    }
 
     pub fn comment() -> Parser<@~str> {
-        "$(".lit().then(scan(to_close))
+        "$( ".lit().then(scan(to_close)).s0()
     }
     //TODO var last_comment: Option[String] = None
       
     pure fn to_close(chars: @[char], index: uint) -> uint {
-        enum S { Start, Dollar };
+        enum S { Start, Space, Dollar };
         let mut state = Start;
-        let mut i = 0;
+        let mut i = index;
         loop {
-            let ch = chars[index + i];
-            if (ch == EOT) { return i }
+            let ch = chars[i];
+            if (! in_range_str(ch, ascii_printable, ws_char)) {
+                return 0;
+            }
             state = match state {
               Start => match ch {
-                '$' => Dollar,
+                ' ' => Space,
                 _ => state
               },
+              Space => match ch {
+                '$' => Dollar,
+                _ => Start
+              },
               Dollar => match ch {
-                ')' => return i,
+                ')' => {
+                    debug!("to_close found ) at %u", i);
+                    return i - index + 1
+                },
                 _ => Start
               }
             };
+            debug!("to_close %c at %u", ch, i);
             i = i + 1;
+        }
+    }
+
+    /**
+    Parse a sequence of one or more comments, and return
+    the value of the last one.
+
+    TODO: test whether it consumes space proportional to the
+    number of comments, and if so, fix.
+     */
+    pub fn comments() -> Parser<@~str> {
+        do comment().thene |c0| {
+            comments()
+                .or(ret(c0))
         }
     }
 
@@ -87,13 +118,11 @@ mod test_preliminaries {
         assert actual.is_err();
     }
 
-    fn space() -> Parser<@~str> { ret(@~"") }
-
     #[test]
-    fn simple_symbol() {
+    fn simple_symbol_with_space() {
         let actual = math_symbol()
             .everything(space())
-            .parse(@~"some_file", @"<*>");
+            .parse(@~"some_file", @" <*> ");
         assert *actual.get() == ~"<*>";
     }
 
@@ -105,6 +134,33 @@ mod test_preliminaries {
         assert actual.is_err();
     }
 
+    #[test]
+    fn simple_comment() {
+        let actual = comment()
+            .everything(space())
+            .parse(@~"f", @"$( c1 $)");
+        match actual {
+          Ok(s) => {
+            debug!("comment: [%s]", *s);
+            assert s == @~"c1 $)"
+          },
+          Err(_) => fail ~"parsing comment"
+        }
+    }
+
+    #[test]
+    fn simple_comments() {
+        let actual = comments()
+            .everything(space())
+            .parse(@~"f", @" $( c1 $)$( c2 $)");
+        match actual {
+          Ok(s) => {
+            debug!("comment: [%s]", *s);
+            assert s == @~"c2 $)"
+          },
+          Err(_) => fail ~"parsing comments"
+        }
+    }
 
     /** The only characters that are allowed to appear in a Metamath
     source file are the 94 printable characters on standard ascii
