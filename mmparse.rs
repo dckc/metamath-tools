@@ -174,8 +174,10 @@ mod test_preliminaries {
             .parse(@~"f", @"$( x \u0000 is not allowed $)");
         match actual {
 	  Ok(_) => fail,
-	  // Err(ParseFailed{file: f, line: y, col: x, mesg: txt}) => assert x == 6
-          Err(_) => ()
+	  Err(pf) => {
+            debug!("parse failed at column: %u", pf.col);
+            assert pf.col == 4
+          }
         }
     }
 }
