@@ -1,10 +1,14 @@
 # rust-lang.org
 RUST=rustc
 
+RUST_THREADS=
+RUST_LOG=
+#RUST_THREADS=1
+#RUST_LOG=mmparse::basic_syntax,mmparse::preprocessing,rparse::parsers
+#...,mmparse::test_preliminaries
+
 check: mmparse
-	./mmparse
-	#RUST_THREADS=1 RUST_LOG=mmparse::test_basic_syntax ./mmparse
-	#RUST_THREADS=1 RUST_LOG=mmparse::test_basic_syntax,mmparse::preprocessing,mmparse::test_preliminaries ./mmparse
+	RUST_THREADS=$(RUST_THREADS) RUST_LOG=$(RUST_LOG) ./mmparse
 
 mmutil: lib mmutil.rs
 	$(RUST) -L . mmutil.rs

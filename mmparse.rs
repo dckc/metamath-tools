@@ -17,11 +17,16 @@ https://github.com/jesse99/rparse
 extern mod rparse;
 use rparse::{Parser, StringParsers, GenericParsers, Combinators,
              ParseFailed,
-             ret, match1, match0, scan, or_v, seq2, seq2_ret0, seq4 };
+             ret, match1, match0, scan, or_v,
+             seq2, seq2_ret0, seq2_ret_str, seq4 };
 
 mod preliminaries {
     pub fn white_space() -> Parser<@~str> {
-        match0(|ch| ws_char.contains_char(ch))
+        scan(|chars, start| {
+            let mut i = start;
+            while (ws_char.contains_char(chars[i])) { i += 1 }
+            i - start
+        }).err("whitspace")
     }
     const ws_char: &str = &" \t\r\n\x0A";
 
@@ -43,12 +48,10 @@ mod preliminaries {
     }
 
     pub fn comment() -> Parser<@~str> {
-        "$(".lit().then(seq2_ret0(
-            do seq2(white_space(), scan(to_close)) |ws, stuff| {
-                Ok(@(*ws + *stuff))
-            },
-            "$)".lit()
-        )).s0()
+        "$(".lit()
+            .then(seq2_ret0(
+                seq2_ret_str(white_space(), scan(to_close)),
+                "$)".lit())).s0()
     }
       
     pure fn to_close(chars: @[char], index: uint) -> uint {
@@ -214,46 +217,46 @@ $)
 pub mod basic_syntax {
     use mod preliminaries::*;
 
-    pub enum ScopingStatement {
+    pub fn statements() -> Parser<@~[@~Statement]> {
+        (comments().optional().thene(statement)).list(white_space())
+    }
+
+    pub enum Statement {
         BlockStart,
-        BlockEnd
+        BlockEnd,
+        KeywordStatement(Option<@~str>, Parts)
     }
 
-    pub fn scoping_statement() -> Parser<ScopingStatement> {
-        comments().optional()
-            .then(("${".litv(BlockStart))
-                  .or("$}".litv(BlockEnd)))
+    fn statement(doc_o: Option<@~str>) -> Parser<@~Statement> {
+        scoping_statement()
+            .or({
+                do keyword_statement().note("kw st.").thene() |parts| {
+                    ret(@~KeywordStatement(doc_o, parts))
+                }
+            }).err("statement")
     }
 
-    struct KeywordStatement {
-        doc: Option<@~str>,
+    pub fn scoping_statement() -> Parser<@~Statement> {
+        ("${".litv(@~BlockStart))
+        .or("$}".litv(@~BlockEnd))
+    }
+
+    struct Parts {
         label: Option<@~str>,
         kw: Keyword,
         expr: @~[@~str],
         pf: Option<@~Proof>
     }
 
-/*
-    impl KeywordStatement: ToStr {
-        pure fn to_str() {
-            fmt!("%s",
-                 (match doc { Some(@s) => "$( " + s + " $)\n", None => "" }),
-                 (match label { Some(@s) => s, None => "" }),
-*/
-
-    pub fn keyword_statement() -> Parser<@~KeywordStatement> {
-        do comments().optional().thene() |doc_o| {
-            debug!("kws after comments");
-            do seq4(label().optional(),
-                    keyword(),
-                    expression(),
-                    proof().optional()) |l_o, kw, e, pf_o| {
-                debug!("kws after seq4");
-                Ok(@~KeywordStatement{
-                    doc: doc_o, label: l_o, kw: kw, expr: e, pf: pf_o})
-            }
-            .thene(|ks| "$.".litv(ks))
+    pub fn keyword_statement() -> Parser<Parts> {
+        do seq4(label().optional(),
+                keyword(),
+                expression(),
+                proof().optional()) |l_o, kw, e, pf_o| {
+            debug!("kws after seq4");
+            Ok(Parts{label: l_o, kw: kw, expr: e, pf: pf_o})
         }
+        .thene(|ks| "$.".litv(ks)).s0()
     }
 
     enum Keyword {
@@ -338,7 +341,6 @@ mod test_basic_syntax {
             .parse(@~"ax1", @"axiom.1 $a |- x = x $.");
         match actual {
           Ok(st) => {
-            assert st.doc == None;
             assert st.label == Some(@~"axiom.1");
             match st.kw { a => (), _ => fail };
             assert st.expr.len() == 4;
@@ -351,15 +353,18 @@ mod test_basic_syntax {
 
     #[test]
     fn keyword_statement_with_doc() {
-        let actual = keyword_statement()
+        let actual = statements()
             .everything(white_space())
             .parse(@~"ax1",
-                   @" $( irrelevant... $) $( doc... $) axiom.1 $a |- x = x $.");
+                   @" $( blah... $) $( doc... $) axiom.1 $a |- x = x $.");
         match actual {
           Ok(st) => {
-            assert st.doc == Some(@~" doc... ");
             debug!("keyword_statement: [%?]", st);
-            ()
+            assert st.len() >= 1;
+            match **st[0] {
+              KeywordStatement(doc, _) => assert doc == Some(@~" doc... "),
+              _ => fail ~"wrong kind of statement"
+            }
           },
           Err(pf) => { fail fmt!("%?", pf) }
         }
