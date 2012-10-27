@@ -28,6 +28,7 @@ mod preliminaries {
             i - start
         }).err("whitspace")
     }
+    // TODO: consider the impact of \x0A here but not in .s0() etc.
     const ws_char: &str = &" \t\r\n\x0A";
 
     // TODO: pub enum Label = @~str; // constrained syntax
@@ -237,11 +238,11 @@ pub mod basic_syntax {
     }
 
     pub fn scoping_statement() -> Parser<@~Statement> {
-        ("${".litv(@~BlockStart))
-        .or("$}".litv(@~BlockEnd))
+        ("${".litv(@~BlockStart)
+        .or("$}".litv(@~BlockEnd))).s0()
     }
 
-    struct Parts {
+    pub struct Parts {
         label: Option<@~str>,
         kw: Keyword,
         expr: @~[@~str],
@@ -277,9 +278,37 @@ pub mod basic_syntax {
         math_symbol().list(white_space().or(comment())).s0()
     }
 
+
+    /** A $p statement consists of ... followed by $=,
+    followed by a sequence of labels, followed by $.
+
+    A compressed proof, located between $= and $. keywords, consists
+    of a left parenthesis, a sequence of statement labels, a right
+    parenthesis, and a sequence of upper-case letters A through Z
+    (with optional white space between them).  */
     pub fn proof() -> Parser<@~Proof> {
-        //@@@
-        "$=".litv(@~Proof{labels: @~[], digits: None})
+        debug!("in proof()");
+
+        let plain = do (label().list(white_space().or(comments()))).thene()
+            |labels| {
+            debug!("plain matched");
+            ret(@~Proof{labels: labels, digits: None})
+        };
+
+        let digits = seq2_ret_str(
+            match1(|ch| any_range(ch, [('A', 'Z')])),
+            match0(|ch| in_range_str(ch, [('A', 'Z')], ws_char)));
+
+        let compressed = do seq4("(".s1(),
+                                 // TODO: think about 0 labels some more
+                                 label().list(white_space()).optional(),
+                                 ")".s1(),
+                                 digits) |open, labels, close, ddd| { // TODO: how to address unused variables?
+            Ok(@~Proof{labels: labels.get_default(@~[]), digits: Some(ddd)})
+        };
+
+        "$=".s1() .then(comments().optional()).then(
+            compressed.or(plain))
     }
 
     pub struct Proof {
@@ -368,6 +397,41 @@ mod test_basic_syntax {
           },
           Err(pf) => { fail fmt!("%?", pf) }
         }
+    }
+
+    #[test]
+    fn test_proof() {
+        let actual = statements()
+            .everything(white_space())
+            .parse(@~"pf1", @"th1 $p |- t = t $= tt tze $.");
+        match actual {
+          Ok(st) => {
+            debug!("p statement: [%?]", st);
+            assert st.len() >= 1;
+            match **st[0] {
+              KeywordStatement(_, Parts{pf: Some(proof), _}) => {
+                debug!("how many labels in pf: %u", proof.labels.len());
+                assert proof.labels.len() == 2;
+              }
+              _ => fail ~"wrong kind of statement"
+            }
+          },
+          Err(pf) => { fail fmt!("%?", pf) }
+        }
+
+    }
+
+
+    #[test]
+    fn test_proof_zero_labels_compressed() {
+        let actual = statements()
+            .everything(white_space())
+            .parse(@~"pf1", @"dummylink $p |- ph $= ( ) C $.");
+        match actual {
+          Ok(st) => debug!("pf: %?", st),
+          Err(pf) => { fail fmt!("%?", pf) }
+        }
+
     }
 
 }

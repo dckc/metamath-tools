@@ -4,6 +4,7 @@ RUST=rustc
 RUST_THREADS=
 RUST_LOG=
 #RUST_THREADS=1
+#RUST_LOG=mmparse::basic_syntax,mmparse::test_basic_syntax
 #RUST_LOG=mmparse::basic_syntax,mmparse::preprocessing,rparse::parsers
 #...,mmparse::test_preliminaries
 

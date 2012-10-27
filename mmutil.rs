@@ -4,7 +4,7 @@ extern mod rparse;
 use rparse::*;  //{StringParsers};
 
 extern mod mmparse;
-use mmparse::basic_syntax::{Statement,KeywordStatement};
+use mmparse::basic_syntax::{Statement, KeywordStatement, white_space};
 
 fn main() {
     let argv = os::args();
@@ -40,9 +40,9 @@ fn main() {
 }
 
 fn do_kw(input_fn: @~str, txt: &str) {
-    let actual = mmparse::basic_syntax::statements()
+    let actual = mmparse::basic_syntax::statements().everything(white_space())
         .parse(input_fn, txt);
-    io::println(fmt!("%?", actual));
+    //io::println(fmt!("%?", actual));
 
     match actual {
       Ok(sts) => show_doc(sts),
