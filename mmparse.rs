@@ -17,7 +17,7 @@ https://github.com/jesse99/rparse
 extern mod rparse;
 use rparse::{Parser, StringParsers, GenericParsers, Combinators,
              ParseFailed,
-             ret, match1, match0, scan, or_v, seq4 };
+             ret, match1, match0, scan, or_v, seq2, seq2_ret0, seq4 };
 
 mod preliminaries {
     pub fn white_space() -> Parser<@~str> {
@@ -43,7 +43,12 @@ mod preliminaries {
     }
 
     pub fn comment() -> Parser<@~str> {
-        "$( ".lit().then(scan(to_close)).s0()
+        "$(".lit().then(seq2_ret0(
+            do seq2(white_space(), scan(to_close)) |ws, stuff| {
+                Ok(@(*ws + *stuff))
+            },
+            "$)".lit()
+        )).s0()
     }
       
     pure fn to_close(chars: @[char], index: uint) -> uint {
@@ -56,18 +61,12 @@ mod preliminaries {
                 return 0;
             }
             state = match state {
-              Start => match ch {
-                ' ' => Space,
-                _ => state
-              },
-              Space => match ch {
-                '$' => Dollar,
-                _ => Start
-              },
+              Start => if (ws_char.contains_char(ch)) {Space} else {state},
+              Space => match ch { '$' => Dollar, _ => Start },
               Dollar => match ch {
                 ')' => {
                     debug!("to_close found ) at %u", i);
-                    return i - index + 1
+                    return i - index - 1
                 },
                 _ => Start
               }
@@ -166,7 +165,7 @@ mod test_preliminaries {
         match actual {
           Ok(s) => {
             debug!("comment: [%s]", *s);
-            assert s == @~"c1 $)"
+            assert s == @~" c1 "
           },
           Err(pf) => { fail fmt!("%?", pf) }
         }
@@ -180,7 +179,30 @@ mod test_preliminaries {
         match actual {
           Ok(s) => {
             debug!("comment: [%s]", *s);
-            assert s == @~"c2 $)"
+            assert s == @~" c2 "
+          },
+          Err(pf) => { fail fmt!("%?", pf) }
+        }
+    }
+
+    #[test]
+    fn comments_over_lines() {
+        let actual = comments()
+            .everything(white_space())
+            .parse(@~"comment_lines", @" $( c1 $)
+$( c2 $)
+
+$(
+ c3
+$)
+
+");
+        match actual {
+          Ok(s) => {
+            debug!("comment: [%s]", *s);
+            debug!("comment length: [%u]", s.len());
+            assert s.len() == 5;
+            assert s.contains("c3")
           },
           Err(pf) => { fail fmt!("%?", pf) }
         }
@@ -189,7 +211,7 @@ mod test_preliminaries {
 }
 
 
-mod basic_syntax {
+pub mod basic_syntax {
     use mod preliminaries::*;
 
     pub enum ScopingStatement {
@@ -335,7 +357,7 @@ mod test_basic_syntax {
                    @" $( irrelevant... $) $( doc... $) axiom.1 $a |- x = x $.");
         match actual {
           Ok(st) => {
-            assert st.doc == Some(@~"doc... $)");
+            assert st.doc == Some(@~" doc... ");
             debug!("keyword_statement: [%?]", st);
             ()
           },
