@@ -26,7 +26,7 @@ mod preliminaries {
             let mut i = start;
             while (ws_char.contains_char(chars[i])) { i += 1 }
             i - start
-        }).err("whitspace")
+        })
     }
     // TODO: consider the impact of \x0A here but not in .s0() etc.
     const ws_char: &str = &" \t\r\n\x0A";
@@ -219,7 +219,7 @@ pub mod basic_syntax {
     use mod preliminaries::*;
 
     pub fn statements() -> Parser<@~[@~Statement]> {
-        (comments().optional().thene(statement)).list(white_space())
+        statement().list(white_space())
     }
 
     pub enum Statement {
@@ -228,13 +228,15 @@ pub mod basic_syntax {
         KeywordStatement(Option<@~str>, Parts)
     }
 
-    fn statement(doc_o: Option<@~str>) -> Parser<@~Statement> {
-        scoping_statement()
-            .or({
-                do keyword_statement().note("kw st.").thene() |parts| {
-                    ret(@~KeywordStatement(doc_o, parts))
-                }
-            }).err("statement")
+    fn statement() -> Parser<@~Statement> {
+        do comments().optional().thene() |doc_o| {
+            scoping_statement()
+                .or({
+                    do keyword_statement().thene() |parts| {
+                        ret(@~KeywordStatement(doc_o, parts))
+                    }
+                }).err("statement")
+        }
     }
 
     pub fn scoping_statement() -> Parser<@~Statement> {
@@ -303,7 +305,7 @@ pub mod basic_syntax {
                                  // TODO: think about 0 labels some more
                                  label().list(white_space()).optional(),
                                  ")".s1(),
-                                 digits) |open, labels, close, ddd| { // TODO: how to address unused variables?
+                                 digits) |_open, labels, _close, ddd| {
             Ok(@~Proof{labels: labels.get_default(@~[]), digits: Some(ddd)})
         };
 
