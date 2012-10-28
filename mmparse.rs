@@ -16,8 +16,8 @@ https://github.com/jesse99/rparse
 */
 extern mod rparse;
 use rparse::{Parser, StringParsers, GenericParsers, Combinators,
-             ParseFailed, State,
-             ret, match1, match0, scan, or_v,
+             ParseFailed, State, Succeeded,
+             ret, match1, match0, scan, or_v, eot,
              seq2, seq2_ret0, seq2_ret_str, seq3_ret1, seq4, seq5 };
 
 mod preliminaries {
@@ -242,6 +242,25 @@ $)
 
 pub mod basic_syntax {
     use mod preliminaries::*;
+
+    pub fn each_statement(thunk: fn&(st: ~Statement)) -> Parser<()> {
+        (|input: State| {
+            let mut output = input;
+            loop {
+                match statement()(output) {
+                  Ok(pass) => {
+                    assert pass.new_state.index > output.index;
+                    output = pass.new_state;
+                    thunk(copy *pass.value);
+                  }
+                  Err(_) => {
+                    break;
+                  }
+                }
+            }
+            Ok(Succeeded{new_state: output, value: ()})
+        }).then(comments().optional()).then(eot())
+    }
 
     pub fn statements() -> Parser<@~[@~Statement]> {
         seq2_ret0(
@@ -500,5 +519,16 @@ axiom.1 $a |- x = x $.
           Err(pf) => { fail fmt!("%?", pf) }
         }
     }
-        
+
+    #[test]
+    fn test_each_statment() {
+        let count = @mut 0;
+        let actual = each_statement( |_st| {
+            *count += 1;
+        }).parse(@~"each", @"$c 0 $. ax $a 1 = 1 $.");
+        match actual {
+          Ok(()) => assert *count == 2,
+          Err(pf) => fail fmt!("%?", pf)
+        }
+    }
 }

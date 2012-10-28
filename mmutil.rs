@@ -14,8 +14,10 @@ fn main() {
         fail usage;
     }
 
-    enum Production { Comments, Statements };
-    let production_flags = ~[(Comments, "-c"), (Statements, "-s")];
+    enum Production { Comments, Statements, Each };
+    let production_flags = ~[(Comments, "-c"),
+                             (Statements, "-s"),
+                             (Each, "-e")];
 
     let production = match (
         production_flags.find(
@@ -30,7 +32,8 @@ fn main() {
       Ok(txt) => {
         match production {
           Comments => do_comments(@input_fn.to_str(), txt),
-          Statements => do_kw(@input_fn.to_str(), txt)
+          Statements => do_kw(@input_fn.to_str(), txt),
+          Each => do_each(@input_fn.to_str(), txt)
         }
       }
       Err(msg) => {
@@ -38,6 +41,18 @@ fn main() {
       }
     }
 }
+
+fn do_each(input_fn: @~str, txt: &str) {
+    let r = mmparse::basic_syntax::each_statement( |st| {
+        io::println("thunk!");
+        show_doc1(st)
+    }).parse(input_fn, txt);
+    match r {
+      Ok(()) => (),
+      Err(x) => fail fmt!("%?", x)
+    }
+}
+
 
 fn do_kw(input_fn: @~str, txt: &str) {
     let actual = mmparse::basic_syntax::statements().everything(white_space())
@@ -51,16 +66,18 @@ fn do_kw(input_fn: @~str, txt: &str) {
 }
 
 fn show_doc(sts: @~[@~Statement]) {
-    for sts.each() |st| {
-        match ***st {
-          KeywordStatement(s) => {
-            match (s.doc, s.label) {
-              (Some(d), Some(l)) => io::println(fmt!("%s: %s", *l, *d)),
-              _ => ()
-            }
-          }
+    for sts.each() |st| { show_doc1(*st) }
+}
+
+fn show_doc1(st: @~Statement) {
+    match **st {
+      KeywordStatement(s) => {
+        match (s.doc, s.label) {
+          (Some(d), Some(l)) => io::println(fmt!("%s: %s", *l, *d)),
           _ => ()
         }
+      }
+      _ => ()
     }
 }
 
