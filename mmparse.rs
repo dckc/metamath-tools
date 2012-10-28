@@ -18,7 +18,7 @@ extern mod rparse;
 use rparse::{Parser, StringParsers, GenericParsers, Combinators,
              ParseFailed,
              ret, match1, match0, scan, or_v,
-             seq2, seq2_ret0, seq2_ret_str, seq4 };
+             seq2, seq2_ret0, seq2_ret_str, seq3_ret1, seq4, seq5 };
 
 mod preliminaries {
     pub fn white_space() -> Parser<@~str> {
@@ -49,31 +49,40 @@ mod preliminaries {
     }
 
     pub fn comment() -> Parser<@~str> {
-        "$(".lit()
-            .then(seq2_ret0(
-                seq2_ret_str(white_space(), scan(to_close)),
-                "$)".lit())).s0()
+        seq3_ret1("$(".lit(),
+                  scan(to_close),
+                  "$)".s0())
     }
       
     pure fn to_close(chars: @[char], index: uint) -> uint {
-        enum S { Start, Space, Dollar };
+        enum S { Start, Space, Text, Dollar };
         let mut state = Start;
         let mut i = index;
         loop {
             let ch = chars[i];
-            if (! in_range_str(ch, ascii_printable, ws_char)) {
+            let is_space = ws_char.contains_char(ch);
+
+            if (! (is_space || any_range(ch, ascii_printable)) ) {
+                warn!("bad character: %c", ch);
                 return 0;
             }
-            state = match state {
-              Start => if (ws_char.contains_char(ch)) {Space} else {state},
-              Space => match ch { '$' => Dollar, _ => Start },
-              Dollar => match ch {
-                ')' => {
-                    debug!("to_close found ) at %u", i);
-                    return i - index - 1
-                },
-                _ => Start
+
+            state = match (state, is_space, ch) {
+              (Start, true, _) => { Space }
+              (Start, false, _) => {
+                warn!("$( must be followed by space");
+                return 0
               }
+              (Space, true, _) => { Space }
+              (Space, _, '$') => { Dollar }
+              (Space, _, _) => { Text }
+              (Text, true, _) => { Space }
+              (Text, _, _) => { Text } 
+              (Dollar, _, ')') => {
+                debug!("to_close found ) at %u", i);
+                return i - index - 1
+              }
+              (Dollar, _, _) => { Text }
             };
             debug!("to_close %c at %u", ch, i);
             i = i + 1;
@@ -124,10 +133,9 @@ mod test_preliminaries {
             .everything(white_space())
             .parse(@~"f", @"$( x \u0000 is not allowed $)");
         match actual {
-	  Ok(_) => fail,
+	  Ok(_) => fail ~"charcter zero not allowed",
 	  Err(pf) => {
-            debug!("parse failed at column: %u", pf.col);
-            assert pf.col == 4
+            debug!("%?", pf);
           }
         }
     }
@@ -170,6 +178,19 @@ mod test_preliminaries {
           Ok(s) => {
             debug!("comment: [%s]", *s);
             assert s == @~" c1 "
+          },
+          Err(pf) => { fail fmt!("%?", pf) }
+        }
+    }
+
+    #[test]
+    fn empty_comment() {
+        let actual = comment()
+            .parse(@~"empty_comment", @"$( $)");
+        match actual {
+          Ok(s) => {
+            debug!("comment: [%s]", *s);
+            assert s == @~" "
           },
           Err(pf) => { fail fmt!("%?", pf) }
         }
@@ -225,17 +246,13 @@ pub mod basic_syntax {
     pub enum Statement {
         BlockStart,
         BlockEnd,
-        KeywordStatement(Option<@~str>, Parts)
+        KeywordStatement(Parts)
     }
 
     fn statement() -> Parser<@~Statement> {
-        do comments().optional().thene() |doc_o| {
+        do comments().optional().thene() |doc| {
             scoping_statement()
-                .or({
-                    do keyword_statement().thene() |parts| {
-                        ret(@~KeywordStatement(doc_o, parts))
-                    }
-                }).err("statement")
+                .or(keyword_statement(doc))
         }
     }
 
@@ -245,21 +262,22 @@ pub mod basic_syntax {
     }
 
     pub struct Parts {
+        doc: Option<@~str>,
         label: Option<@~str>,
         kw: Keyword,
         expr: @~[@~str],
         pf: Option<@~Proof>
     }
 
-    pub fn keyword_statement() -> Parser<Parts> {
-        do seq4(label().optional(),
+    pub fn keyword_statement(doc: Option<@~str>) -> Parser<@~Statement> {
+        do seq5(label().optional(),
                 keyword(),
                 expression(),
-                proof().optional()) |l_o, kw, e, pf_o| {
-            debug!("kws after seq4");
-            Ok(Parts{label: l_o, kw: kw, expr: e, pf: pf_o})
+                proof().optional(),
+                "$.".s0()) |l, kw, e, pf, _dot| {
+            Ok(@~KeywordStatement(
+                Parts{doc: doc, label: l, kw: kw, expr: e, pf: pf}))
         }
-        .thene(|ks| "$.".litv(ks)).s0()
     }
 
     enum Keyword {
@@ -366,19 +384,22 @@ mod test_basic_syntax {
     }
 
     #[test]
-    fn simple_keyword_statement() {
-        let actual = keyword_statement()
+    fn simple_a_statement() {
+        let actual = statement()
             .everything(white_space())
             .parse(@~"ax1", @"axiom.1 $a |- x = x $.");
         match actual {
-          Ok(st) => {
+          Ok(@~KeywordStatement(st)) => {
+            debug!("keyword_statement: [%?]", st);
+            assert st.doc.is_none();
             assert st.label == Some(@~"axiom.1");
             match st.kw { a => (), _ => fail };
             assert st.expr.len() == 4;
-            debug!("keyword_statement: [%?]", st);
+            assert st.expr == @~[@~"|-", @~"x", @~"=", @~"x"];
             ()
           },
           Err(pf) => { fail fmt!("%?", pf) }
+          _ => fail ~"wrong kind of statement"
         }
     }
 
@@ -393,7 +414,7 @@ mod test_basic_syntax {
             debug!("keyword_statement: [%?]", st);
             assert st.len() >= 1;
             match **st[0] {
-              KeywordStatement(doc, _) => assert doc == Some(@~" doc... "),
+              KeywordStatement(st) => assert st.doc == Some(@~" doc... "),
               _ => fail ~"wrong kind of statement"
             }
           },
@@ -411,7 +432,7 @@ mod test_basic_syntax {
             debug!("p statement: [%?]", st);
             assert st.len() >= 1;
             match **st[0] {
-              KeywordStatement(_, Parts{pf: Some(proof), _}) => {
+              KeywordStatement(Parts{pf: Some(proof), _}) => {
                 debug!("how many labels in pf: %u", proof.labels.len());
                 assert proof.labels.len() == 2;
               }

@@ -53,9 +53,9 @@ fn do_kw(input_fn: @~str, txt: &str) {
 fn show_doc(sts: @~[@~Statement]) {
     for sts.each() |st| {
         match ***st {
-          KeywordStatement(Some(doc), p) => {
-            match p.label {
-              Some(l) => io::println(fmt!("%s: %s", *l, *doc)),
+          KeywordStatement(s) => {
+            match (s.doc, s.label) {
+              (Some(d), Some(l)) => io::println(fmt!("%s: %s", *l, *d)),
               _ => ()
             }
           }
