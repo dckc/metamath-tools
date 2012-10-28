@@ -35,12 +35,12 @@ mod preliminaries {
 
     pub fn label() -> Parser<@~str> {
         match1(|ch| {  // why isn't match1 pure?
-            any_range(ch, [('A', 'Z'), ('a', 'z'), ('0', '9')])
+            any_range(ch, @[('A', 'Z'), ('a', 'z'), ('0', '9')])
                 || label_extra.contains_char(ch)
         }).s0()
     }
 
-    pure fn in_range_str(ch: char, r: Ranges, extra: &str) -> bool {
+    pure fn in_range_str(ch: char, r: &[Range], extra: &str) -> bool {
         any_range(ch, r) || extra.contains_char(ch)
     }
 
@@ -50,43 +50,47 @@ mod preliminaries {
 
     pub fn comment() -> Parser<@~str> {
         seq3_ret1("$(".lit(),
-                  scan(to_close),
+                  scan_to_close(ascii_printable, ')'),
                   "$)".s0())
     }
-      
-    pure fn to_close(chars: @[char], index: uint) -> uint {
-        enum S { Start, Space, Text, Dollar };
-        let mut state = Start;
-        let mut i = index;
-        loop {
-            let ch = chars[i];
-            let is_space = ws_char.contains_char(ch);
 
-            if (! (is_space || any_range(ch, ascii_printable)) ) {
-                warn!("bad character: %c", ch);
-                return 0;
+    fn scan_to_close(text_ranges: &static/[Range],
+                     delim: char) -> Parser<@~str> {
+        let to_close = fn@(input: @[char], offset: uint) -> uint {
+            enum S { Start, Space, Text, Delim };
+            let mut state = Start;
+            let mut i = offset;
+            loop {
+                let ch = input[i];
+                let is_space = ws_char.contains_char(ch);
+
+                if (! (is_space || any_range(ch, text_ranges)) ) {
+                    warn!("bad character: %c", ch);
+                    return 0;
+                }
+
+                state = match (state, is_space, ch) {
+                  (Start, true, _) => { Space }
+                  (Start, false, _) => {
+                    warn!("expected space");
+                    return 0
+                  }
+                  (Space, true, _) => { Space }
+                  (Space, _, '$') => { Delim }
+                  (Space, _, _) => { Text }
+                  (Text, true, _) => { Space }
+                  (Text, _, _) => { Text }
+                  (Delim, _, d) if d == delim => {
+                    debug!("to_close found %c at %u", ch, i);
+                    return i - offset - 1
+                  }
+                  (Delim, _, _) => { Text }
+                };
+                debug!("to_close %c at %u", ch, i);
+                i = i + 1;
             }
-
-            state = match (state, is_space, ch) {
-              (Start, true, _) => { Space }
-              (Start, false, _) => {
-                warn!("$( must be followed by space");
-                return 0
-              }
-              (Space, true, _) => { Space }
-              (Space, _, '$') => { Dollar }
-              (Space, _, _) => { Text }
-              (Text, true, _) => { Space }
-              (Text, _, _) => { Text } 
-              (Dollar, _, ')') => {
-                debug!("to_close found ) at %u", i);
-                return i - index - 1
-              }
-              (Dollar, _, _) => { Text }
-            };
-            debug!("to_close %c at %u", ch, i);
-            i = i + 1;
-        }
+        };
+        scan(to_close)
     }
 
     /**
@@ -103,16 +107,16 @@ mod preliminaries {
         }
     }
 
-    type Ranges = &[(char, char)];
-    pure fn any_range(ch: char, ranges: Ranges) -> bool {
+    type Range = (char, char);
+    pure fn any_range(ch: char, ranges: &[Range]) -> bool {
         any(ranges,
             |r| { match r { &(lo, hi) => ch >= lo && ch <= hi } })
     }
 
-    const ascii_printable: Ranges = &[('\u0021', '\u007f')];
-    const ascii_printable_but_dollar: Ranges =
+    const ascii_printable: &[Range] = &[('\u0021', '\u007f')];
+    const ascii_printable_but_dollar: &[Range] =
         &[('\u0021', '\u0023'), ('\u0025', '\u007f')];
-    const ascii_printable_but_cparen: Ranges =
+    const ascii_printable_but_cparen: &[Range] =
         &[('\u0021', '\u0028'), ('\u002A', '\u007f')];
     const label_extra: &str = &"'-_.";
 }
@@ -240,7 +244,9 @@ pub mod basic_syntax {
     use mod preliminaries::*;
 
     pub fn statements() -> Parser<@~[@~Statement]> {
-        statement().list(white_space())
+        seq2_ret0(
+            statement().list(white_space()),
+            comments().optional())
     }
 
     pub enum Statement {
@@ -317,18 +323,15 @@ pub mod basic_syntax {
     pub fn proof() -> Parser<@~Proof> {
         let plain = do (label().list(white_space().or(comments()))).thene()
             |labels| {
-            debug!("plain matched");
             ret(@~Proof{labels: labels, digits: None})
         };
 
-        let digits = seq2_ret_str(
-            match1(|ch| any_range(ch, [('A', 'Z')])),
-            match0(|ch| in_range_str(ch, [('A', 'Z')], ws_char)));
+        let digits = scan_to_close(&[('A', 'Z')], '.');
 
         let compressed = do seq4("(".s1(),
                                  // TODO: think about 0 labels some more
                                  label().list(white_space()).optional(),
-                                 ")".s1(),
+                                 ")".lit(),
                                  digits) |_open, labels, _close, ddd| {
             Ok(@~Proof{labels: labels.get_default(@~[]), digits: Some(ddd)})
         };
@@ -463,4 +466,39 @@ mod test_basic_syntax {
 
     }
 
+    #[test]
+    fn test_proof_line_num() {
+        let actual = statements()
+            .everything(white_space())
+            .parse(@~"pf1", @"th1 $p |- ph $= ( a b c
+d e f ) ABC
+DEF $.
+axiom.1 $a |- x = x $.
+");
+        match actual {
+          Ok(db) => {
+            debug!("db: %?", db);
+            assert db.len() >= 2;
+            match **db[1] {
+              KeywordStatement(st) => assert st.line == 4,
+              _ => fail ~"wrong kind of statement"
+            }
+          }
+          Err(pf) => { fail fmt!("%?", pf) }
+        }
+
+    }
+
+    #[test]
+    fn test_trailing_comments() {
+        let actual = statements()
+            .everything(white_space())
+            .parse(@~"trailing_comments",
+                   @"axiom.1 $a |- x = x $. $( blah... $) $( doc... $)");
+        match actual {
+          Ok(st) => debug!("parse: %?", st),
+          Err(pf) => { fail fmt!("%?", pf) }
+        }
+    }
+        
 }
