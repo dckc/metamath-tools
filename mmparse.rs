@@ -16,7 +16,7 @@ https://github.com/jesse99/rparse
 */
 extern mod rparse;
 use rparse::{Parser, StringParsers, GenericParsers, Combinators,
-             ParseFailed,
+             ParseFailed, State,
              ret, match1, match0, scan, or_v,
              seq2, seq2_ret0, seq2_ret_str, seq3_ret1, seq4, seq5 };
 
@@ -263,6 +263,8 @@ pub mod basic_syntax {
 
     pub struct Parts {
         doc: Option<@~str>,
+        file: @~str,
+        line: int,
         label: Option<@~str>,
         kw: Keyword,
         expr: @~[@~str],
@@ -270,13 +272,19 @@ pub mod basic_syntax {
     }
 
     pub fn keyword_statement(doc: Option<@~str>) -> Parser<@~Statement> {
-        do seq5(label().optional(),
-                keyword(),
-                expression(),
-                proof().optional(),
-                "$.".s0()) |l, kw, e, pf, _dot| {
-            Ok(@~KeywordStatement(
-                Parts{doc: doc, label: l, kw: kw, expr: e, pf: pf}))
+        |input: State|
+        {
+            (do seq5(label().optional(),
+                     keyword(),
+                     expression(),
+                     proof().optional(),
+                     "$.".s0()) |l, kw, e, pf, _dot| {
+                let ks = Parts{doc: doc, file: input.file, line: input.line,
+                               label: l, kw: kw, expr: e, pf: pf};
+                debug!("%s:%d: [%s] %?", *ks.file, ks.line,
+                       *ks.label.get_default(@~""), ks.kw);
+                Ok(@~KeywordStatement(ks))
+            })(input)
         }
     }
 
@@ -307,8 +315,6 @@ pub mod basic_syntax {
     parenthesis, and a sequence of upper-case letters A through Z
     (with optional white space between them).  */
     pub fn proof() -> Parser<@~Proof> {
-        debug!("in proof()");
-
         let plain = do (label().list(white_space().or(comments()))).thene()
             |labels| {
             debug!("plain matched");
