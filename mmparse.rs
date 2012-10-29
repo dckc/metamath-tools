@@ -7,6 +7,7 @@ http://en.wikipedia.org/wiki/Parser_combinator
 extern mod std; // else --test goes wonky
 
 use core::vec::{any};
+use std::map::{Map, HashMap};
 
 /**
 $ cargo search rparse
@@ -31,21 +32,74 @@ mod preliminaries {
     // TODO: consider the impact of \x0A here but not in .s0() etc.
     const ws_char: &str = &" \t\r\n\x0A";
 
-    // TODO: pub enum Label = @~str; // constrained syntax
+    enum Label = uint;
+    impl Label: cmp::Eq {
+        pure fn eq(other: &Label) -> bool { *self == **other }
+        pure fn ne(other: &Label) -> bool { *self != **other }
+    }
+    enum Symbol = uint;
+    impl Symbol: cmp::Eq {
+        pure fn eq(other: &Symbol) -> bool { *self == **other }
+        pure fn ne(other: &Symbol) -> bool { *self != **other }
+    }
 
-    pub fn label() -> Parser<@~str> {
-        match1(|ch| {  // why isn't match1 pure?
+    // TODO: consider refactoring as SymbolParser with label() method etc.
+    pub trait SymbolTable {
+        fn intern_l(s: @~str) -> Label;
+        fn intern_s(s: @~str) -> Symbol;
+        fn lookup_l(l: Label) -> Option<@~str>;
+        fn lookup_s(s: Symbol) -> Option<@~str>;
+    }
+    struct SymbolTableI {
+        by_name: HashMap<@~str, uint>,
+        mut by_index: ~[@~str]
+    }
+    fn SymbolTable() -> SymbolTable {
+        // huh? why isn't HashMap() pure?
+        @SymbolTableI{by_name: HashMap(), by_index: ~[]} as SymbolTable
+    }
+
+    impl @SymbolTableI: SymbolTable {
+        fn intern_l(s: @~str) -> Label { Label(self.intern(s)) }
+        fn intern_s(s: @~str) -> Symbol { Symbol(self.intern(s)) }
+        fn intern(s: @~str) -> uint {
+            match self.by_name.find(s) {
+              Some(n) => n,
+              None => {
+                let n = self.by_index.len();
+                self.by_name.insert(s, n);
+                self.by_index.push(s);
+                n
+              }
+            }
+        }
+
+        fn lookup_l(l: Label) -> Option<@~str> { self.lookup(*l) }
+        fn lookup_s(s: Symbol) -> Option<@~str> { self.lookup(*s) }
+
+        fn lookup(n: uint) -> Option<@~str> {
+            if (n < self.by_index.len()) { Some(self.by_index[n]) }
+            else { None }
+        }
+    }
+
+    pub fn label(t: SymbolTable) -> Parser<Label> {
+        match1(|ch| {
             any_range(ch, @[('A', 'Z'), ('a', 'z'), ('0', '9')])
                 || label_extra.contains_char(ch)
-        }).s0()
+        })
+            .s0()
+            .thene(|txt| ret(t.intern_l(txt)))
     }
 
     pure fn in_range_str(ch: char, r: &[Range], extra: &str) -> bool {
         any_range(ch, r) || extra.contains_char(ch)
     }
 
-    pub fn math_symbol() -> Parser<@~str> {
-        match1(|ch| { any_range(ch, ascii_printable_but_dollar) }).s0()
+    pub fn math_symbol(t: SymbolTable) -> Parser<Symbol> {
+        match1(|ch| { any_range(ch, ascii_printable_but_dollar) })
+            .s0()
+            .thene(|txt| ret(t.intern_s(txt)))
     }
 
     pub fn comment() -> Parser<@~str> {
@@ -64,8 +118,11 @@ mod preliminaries {
                 let ch = input[i];
                 let is_space = ws_char.contains_char(ch);
 
-                if (! (is_space || any_range(ch, text_ranges)) ) {
-                    warn!("bad character: %c", ch);
+                if (! (is_space
+                       || ch == '$'
+                       || ch == delim
+                       || any_range(ch, text_ranges)) ) {
+                    warn!("bad character: %c (ranges: %?)", ch, text_ranges);
                     return 0;
                 }
 
@@ -86,7 +143,7 @@ mod preliminaries {
                   }
                   (Delim, _, _) => { Text }
                 };
-                debug!("to_close %c at %u", ch, i);
+                debug!("to_close: %u: %? %c", i, state, ch);
                 i = i + 1;
             }
         };
@@ -147,27 +204,29 @@ mod test_preliminaries {
 
     #[test]
     fn simple_label() {
-        let actual = label().parse(@~"some_file", @"label1");
-        assert *actual.get() == ~"label1";
+        let t = SymbolTable();
+        let actual = label(t).parse(@~"some_file", @"label1");
+        assert t.lookup_l(actual.get()) == Some(@~"label1");
     }
 
     #[test]
     fn bad_label() {
-        let actual = label().parse(@~"some_file", @"<X>");
+        let actual = label(SymbolTable()).parse(@~"some_file", @"<X>");
         assert actual.is_err();
     }
 
     #[test]
     fn simple_symbol_with_space() {
-        let actual = math_symbol()
+        let t = SymbolTable();
+        let actual = math_symbol(t)
             .everything(white_space())
             .parse(@~"some_file", @" <*> ");
-        assert *actual.get() == ~"<*>";
+        assert t.lookup_s(actual.get()) == Some(@~"<*>");
     }
 
     #[test]
     fn bad_symbol() {
-        let actual = math_symbol()
+        let actual = math_symbol(SymbolTable())
             .everything(white_space())
             .parse(@~"some_file", @"<$>");
         assert actual.is_err();
@@ -243,6 +302,7 @@ $)
 pub mod basic_syntax {
     use mod preliminaries::*;
 
+/*@@@@@@@@
     pub fn each_statement(thunk: fn&(st: ~Statement)) -> Parser<()> {
         (|input: State| {
             let mut output = input;
@@ -261,10 +321,13 @@ pub mod basic_syntax {
             Ok(Succeeded{new_state: output, value: ()})
         }).then(comments().optional()).then(eot())
     }
+*/
 
-    pub fn statements() -> Parser<@~[@~Statement]> {
+    // TODO: deprecate this. only for testing?
+    pub fn statements(stdocs: @mut~[AboutSt], t: @SymbolTable)
+        -> Parser<@~[Statement]> {
         seq2_ret0(
-            statement().list(white_space()),
+            statement(stdocs, t).list(white_space()),
             comments().optional())
     }
 
@@ -274,41 +337,57 @@ pub mod basic_syntax {
         KeywordStatement(Parts)
     }
 
-    fn statement() -> Parser<@~Statement> {
+    fn statement(stdocs: @mut~[AboutSt], t: @SymbolTable)
+        -> Parser<Statement> {
         do comments().optional().thene() |doc| {
             scoping_statement()
-                .or(keyword_statement(doc))
+                .or(keyword_statement(stdocs, t, doc))
         }
     }
 
-    pub fn scoping_statement() -> Parser<@~Statement> {
-        ("${".litv(@~BlockStart)
-        .or("$}".litv(@~BlockEnd))).s0()
+    pub fn scoping_statement() -> Parser<Statement> {
+        ("${".litv(BlockStart)
+        .or("$}".litv(BlockEnd))).s0()
+    }
+
+    enum StDoc = uint;
+    pub struct AboutSt {
+        doc: Option<@~str>,
+        file: @~str,
+        line: int
     }
 
     pub struct Parts {
-        doc: Option<@~str>,
-        file: @~str,
-        line: int,
-        label: Option<@~str>,
+        about: StDoc,
+        label: Option<Label>,
         kw: Keyword,
-        expr: @~[@~str],
-        pf: Option<@~Proof>
+        expr: ~[Symbol],
+        pf: Option<Proof>
     }
 
-    pub fn keyword_statement(doc: Option<@~str>) -> Parser<@~Statement> {
+    pub fn keyword_statement(stdocs: @mut~[AboutSt], t: @SymbolTable,
+                             doc: Option<@~str>)
+        -> Parser<Statement> {
         |input: State|
         {
-            (do seq5(label().optional(),
+            (do seq5(label(t).optional(),
                      keyword(),
-                     expression(),
-                     proof().optional(),
+                     expression(t),
+                     proof(t).optional(),
                      "$.".s0()) |l, kw, e, pf, _dot| {
-                let ks = Parts{doc: doc, file: input.file, line: input.line,
-                               label: l, kw: kw, expr: e, pf: pf};
-                debug!("%s:%d: [%s] %?", *ks.file, ks.line,
-                       *ks.label.get_default(@~""), ks.kw);
-                Ok(@~KeywordStatement(ks))
+                let meta = AboutSt{doc: doc,
+                                   file: input.file, line: input.line};
+                let about = StDoc(stdocs.len());
+                stdocs.push(meta);
+
+                let ks = Parts{about: about, label: l, kw: kw,
+                               expr: copy *e, pf: pf};
+
+                debug!("%s:%d: [%s] %?",
+                       *meta.file, meta.line,
+                       *ks.label.map_default(@~"", |l| t.lookup_l(*l).get()),
+                       ks.kw);
+                Ok(KeywordStatement(ks))
             })(input)
         }
     }
@@ -327,8 +406,8 @@ pub mod basic_syntax {
         or_v(parsers).s0()
     }
 
-    pub fn expression() -> Parser<@~[@~str]> {
-        math_symbol().list(white_space().or(comment())).s0()
+    pub fn expression(t: @SymbolTable) -> Parser<@~[Symbol]> {
+        math_symbol(t).list(white_space().or(comment())).s0()
     }
 
 
@@ -339,20 +418,21 @@ pub mod basic_syntax {
     of a left parenthesis, a sequence of statement labels, a right
     parenthesis, and a sequence of upper-case letters A through Z
     (with optional white space between them).  */
-    pub fn proof() -> Parser<@~Proof> {
-        let plain = do (label().list(white_space().or(comments()))).thene()
+    pub fn proof(t: @SymbolTable) -> Parser<Proof> {
+        let plain = do (label(t).list(white_space().or(comments()))).thene()
             |labels| {
-            ret(@~Proof{labels: labels, digits: None})
+            ret(Proof{labels: copy *labels, digits: None})
         };
 
         let digits = scan_to_close(&[('A', 'Z')], '.');
 
         let compressed = do seq4("(".s1(),
                                  // TODO: think about 0 labels some more
-                                 label().list(white_space()).optional(),
+                                 label(t).list(white_space()).optional(),
                                  ")".lit(),
                                  digits) |_open, labels, _close, ddd| {
-            Ok(@~Proof{labels: labels.get_default(@~[]), digits: Some(ddd)})
+            Ok(Proof{labels: labels.map_default(~[], |ls| copy **ls),
+                     digits: Some(ddd.to_unique())})
         };
 
         "$=".s1() .then(comments().optional()).then(
@@ -360,8 +440,8 @@ pub mod basic_syntax {
     }
 
     pub struct Proof {
-        labels: @~[@~str],
-        digits: Option<@~str>
+        labels: ~[Label],
+        digits: Option<~str>
     }
 
 }
@@ -371,155 +451,148 @@ pub mod basic_syntax {
 mod test_basic_syntax {
     use mod basic_syntax::*;
 
-    #[test]
-    fn simple_keyword() {
-        let actual = keyword()
-            .everything(white_space())
-            .parse(@~"ex1", @" $a ");
+    fn check_parse<T: Copy Owned>(file: @~str, txt: @str, prod: Parser<T>,
+                                  more_checks: fn&(T)) {
+        let actual = prod.parse(file, txt);
         match actual {
-          Ok(kw) => {
-            debug!("keyword: [%?]", kw);
-            match kw { a => (), _ => fail };
+          Ok(x) => {
+            debug!("%s: [%?]", *file, x);
+            more_checks(x)
           },
           Err(pf) => { fail fmt!("%?", pf) }
+        }
+    }
+
+    #[test]
+    fn simple_keyword() {
+        let prod = keyword().everything(white_space());
+        do check_parse(@~"ex1", @" $a ", prod) |kw| {
+            match kw { a => (), _ => fail };
         }
     }
 
     #[test]
     fn simple_expression() {
-        let actual = expression()
-            .everything(white_space())
-            .parse(@~"ex1", @" |- x = x");
-        match actual {
-          Ok(expr) => {
-            debug!("expression: [%?]", expr);
+        let t = SymbolTable();
+        let prod = expression(t).everything(white_space());
+        do check_parse(@~"expression1", @" |- x = x", prod) | expr | {
             assert expr.len() == 4;
-            assert *expr[0] == ~"|-";
-            ()
-          },
-          Err(pf) => { fail fmt!("%?", pf) }
+            assert t.lookup_s(expr[0]) == Some(@~"|-");
         }
     }
 
     #[test]
     fn expression_before_dot() {
-        let actual = expression()
-            .parse(@~"ex2", @"|- x = x $.");
-        match actual {
-          Ok(s) => { debug!("expression: [%?]", s); () },
-          Err(pf) => { fail fmt!("%?", pf) }
+        let t = SymbolTable();
+        let prod = expression(t);
+        do check_parse(@~"ex_before_dot", @"|- x = x $.", prod) |_s| {
+        }
+    }
+
+    fn check_statements(file: @~str, txt: @str,
+                        more_checks: fn&(sts: @mut~[AboutSt],
+                                         t: SymbolTable, ss: @~[Statement])) {
+        let sts = @mut~[];
+        let t = SymbolTable();
+        let prod = statements(sts, t).everything(white_space());
+        do check_parse(file, txt, prod) |ss| {
+            more_checks(sts, t, ss)
         }
     }
 
     #[test]
     fn simple_a_statement() {
-        let actual = statement()
-            .everything(white_space())
-            .parse(@~"ax1", @"axiom.1 $a |- x = x $.");
-        match actual {
-          Ok(@~KeywordStatement(st)) => {
-            debug!("keyword_statement: [%?]", st);
-            assert st.doc.is_none();
-            assert st.label == Some(@~"axiom.1");
-            match st.kw { a => (), _ => fail };
-            assert st.expr.len() == 4;
-            assert st.expr == @~[@~"|-", @~"x", @~"=", @~"x"];
-            ()
-          },
-          Err(pf) => { fail fmt!("%?", pf) }
-          _ => fail ~"wrong kind of statement"
+        do check_statements(@~"ax1", @"axiom.1 $a |- x = x $.")
+            |sts, t, ss| {
+            assert ss.len() == 1;
+            match ss[0] {
+              KeywordStatement(st) => {
+                assert sts[*st.about].doc.is_none();
+                assert st.label == Some(t.intern_l(@~"axiom.1"));
+                match st.kw { a => (), _ => fail };
+                assert st.expr.len() == 4;
+                assert st.expr == [@~"|-", @~"x", @~"=", @~"x"].map(
+                    |s| t.intern_s(*s));
+              }
+              _ => fail ~"wrong kind of statement"
+            }
         }
     }
 
     #[test]
     fn keyword_statement_with_doc() {
-        let actual = statements()
-            .everything(white_space())
-            .parse(@~"ax1",
-                   @" $( blah... $) $( doc... $) axiom.1 $a |- x = x $.");
-        match actual {
-          Ok(st) => {
-            debug!("keyword_statement: [%?]", st);
-            assert st.len() >= 1;
-            match **st[0] {
-              KeywordStatement(st) => assert st.doc == Some(@~" doc... "),
-              _ => fail ~"wrong kind of statement"
+        do check_statements(
+            @~"kw_w_doc",
+            @" $( blah... $) $( doc... $) axiom.1 $a |- x = x $.")
+            |sts, _t, ss| {
+            assert ss.len() >= 1;
+            match ss[0] {
+                KeywordStatement(st) => {
+                    assert sts[*st.about].doc == Some(@~" doc... ")
+                }
+                _ => fail ~"wrong kind of statement"
             }
-          },
-          Err(pf) => { fail fmt!("%?", pf) }
         }
     }
 
     #[test]
     fn test_proof() {
-        let actual = statements()
-            .everything(white_space())
-            .parse(@~"pf1", @"th1 $p |- t = t $= tt tze $.");
-        match actual {
-          Ok(st) => {
-            debug!("p statement: [%?]", st);
-            assert st.len() >= 1;
-            match **st[0] {
+        do check_statements(@~"pf1",
+                            @"th1 $p |- t = t $= tt tze $.")
+            |_sts, _t, ss| {
+            assert ss.len() >= 1;
+            match ss[0] {
               KeywordStatement(Parts{pf: Some(proof), _}) => {
                 debug!("how many labels in pf: %u", proof.labels.len());
                 assert proof.labels.len() == 2;
               }
               _ => fail ~"wrong kind of statement"
             }
-          },
-          Err(pf) => { fail fmt!("%?", pf) }
         }
-
     }
 
 
     #[test]
     fn test_proof_zero_labels_compressed() {
-        let actual = statements()
-            .everything(white_space())
-            .parse(@~"pf1", @"dummylink $p |- ph $= ( ) C $.");
-        match actual {
-          Ok(st) => debug!("pf: %?", st),
-          Err(pf) => { fail fmt!("%?", pf) }
-        }
-
+        do check_statements(@~"pf1", @"dummylink $p |- ph $= ( ) C $.")
+            |_sts, _t, _ss| {   }
     }
 
     #[test]
+    fn test_digits() {
+        let digits = scan_to_close(&[('A', 'Z')], '.');
+        do check_parse(@~"digits", @" ABC $.", digits) |ds| {
+            assert ds == @~" ABC ";
+        }
+    }
+
+
+    #[test]
     fn test_proof_line_num() {
-        let actual = statements()
-            .everything(white_space())
-            .parse(@~"pf1", @"th1 $p |- ph $= ( a b c
+        do check_statements(@~"pf_line_num", @"th1 $p |- ph $= ( a b c
 d e f ) ABC
 DEF $.
 axiom.1 $a |- x = x $.
-");
-        match actual {
-          Ok(db) => {
-            debug!("db: %?", db);
-            assert db.len() >= 2;
-            match **db[1] {
-              KeywordStatement(st) => assert st.line == 4,
+"
+                           ) |sts, _t, ss| {
+            assert ss.len() >= 2;
+            match ss[1] {
+              KeywordStatement(st) => assert sts[*st.about].line == 4,
               _ => fail ~"wrong kind of statement"
             }
-          }
-          Err(pf) => { fail fmt!("%?", pf) }
         }
-
     }
 
     #[test]
     fn test_trailing_comments() {
-        let actual = statements()
-            .everything(white_space())
-            .parse(@~"trailing_comments",
-                   @"axiom.1 $a |- x = x $. $( blah... $) $( doc... $)");
-        match actual {
-          Ok(st) => debug!("parse: %?", st),
-          Err(pf) => { fail fmt!("%?", pf) }
+        do check_statements(
+            @~"trailing_comments",
+            @"axiom.1 $a |- x = x $. $( blah... $) $( doc... $)")
+            |_sts, _t, _ss| {
         }
     }
 
+/*
     #[test]
     fn test_each_statment() {
         let count = @mut 0;
@@ -531,4 +604,5 @@ axiom.1 $a |- x = x $.
           Err(pf) => fail fmt!("%?", pf)
         }
     }
+*/
 }
