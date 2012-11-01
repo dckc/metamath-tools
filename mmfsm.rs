@@ -27,8 +27,8 @@ enum Keyword {
     _c, _v, _f, _e, _d, _a, _p
 }
 
-enum Label = rope::Rope;
-enum Symbol = rope::Rope;
+enum Label = ~str;
+enum Symbol = ~str;
 
 pub enum Statement {
     BlockStart,
@@ -44,9 +44,9 @@ pub struct AboutSt {
 }
 
 
-
 //TODO: let thunk return a bool to stop
-fn each_statement(text: rope::Rope, thunk: fn&(&Statement)) -> bool {
+fn each_statement(text: rope::Rope, thunk: fn&(&Statement))
+    -> Result<(), ~str> {
     enum CharClass { Space, Printable, BadChar }
 
     enum State {
@@ -80,7 +80,7 @@ fn each_statement(text: rope::Rope, thunk: fn&(&Statement)) -> bool {
             || "'-_.".contains_char(ch);
 
 
-        debug!("state: %? cclass: %? is_label: %? ch1: '%c' ch: '%c'",
+        debug!("state: %? cclass: %? is_label: %? ch1: [%c] ch: [%c]",
                state, cclass, is_label, ch1, ch);
 
         state = match (state, cclass, is_label, ch1, ch) {
@@ -94,8 +94,8 @@ fn each_statement(text: rope::Rope, thunk: fn&(&Statement)) -> bool {
           (StLabel, Space, _, _, _) => {
             match tok_start {
               Some(where) => label = Some(Label(
-                  rope::sub_chars(text, where, pos - where))),
-              None => ()
+                  to_str(rope::sub_chars(text, where, pos - where)))),
+              None => fail ~"StLabel requires tok_start = Some(where)"
             }
             after_space = StKeyword;
             ISpace
@@ -115,7 +115,7 @@ fn each_statement(text: rope::Rope, thunk: fn&(&Statement)) -> bool {
 
           (StExpr, _, _, '$', '.') => {
             let statement = match keyword {
-              _a => Axiom(label, copy expr),
+              _a => Axiom(copy label, copy expr),
               _ => fail fmt!("not implemented: %?", keyword)
             };
             thunk(&statement);
@@ -129,7 +129,8 @@ fn each_statement(text: rope::Rope, thunk: fn&(&Statement)) -> bool {
           (StExpr, Space, _, _, _) => {
             match tok_start {
               Some(where) => {
-                expr.push(Symbol(rope::sub_chars(text, where, pos - where)));
+                expr.push(Symbol(
+                    to_str(rope::sub_chars(text, where, pos - where))));
               }
               _ => () // leading space
             }
@@ -137,8 +138,10 @@ fn each_statement(text: rope::Rope, thunk: fn&(&Statement)) -> bool {
             StExpr
           }
 
+          // Trailing space
           (TSpace, Space, _, _, _) => TSpace,
-          (TSpace, Printable, _, _, _) => BadSyntax,  // not implemented
+          (TSpace, Printable, true, _, _) => { tok_start = Some(pos); StLabel },
+          (TSpace, _, _, _, _) => BadSyntax,  // not implemented
 
           (BadSyntax, _, _, _, _) => fail fmt!("unexpected state: %?", state)
         };
@@ -152,29 +155,54 @@ fn each_statement(text: rope::Rope, thunk: fn&(&Statement)) -> bool {
     };
 
     match state {
-      TSpace => true,
-      _ => false
+      TSpace => Ok(()),
+      // TODO: count lines, show current line
+      _ => Err(fmt!("parse failed at position %u '%c' in %?",
+                    pos, rope::char_at(text, pos), state))
     }
 }
 
+
+fn to_str(text: rope::Rope) -> ~str {
+    let mut out = ~"";
+    do rope::loop_leaves(text) |l| {
+        out = str::append(
+            copy out, str::substr(*l.content, l.byte_offset, l.byte_len));
+        true
+    };
+    out
+}
+
+
 #[cfg(test)]
 mod test {
-    #[test]
-    fn each_statement1() {
-        let doc = rope::of_str(@~"axiom.1 $a |- x = x $.");
-        let ok = (do each_statement(doc) |st| {
+    fn test_axiom(txt: @~str, label: ~str, expr_len: uint) {
+        let doc = rope::of_str(txt);
+        let result = (do each_statement(doc) |st| {
             debug!("each statement: %?", st);
             match *st {
-              Axiom(Some(label), expr) => {
-                assert rope::eq(*label, rope::of_str(@~"axiom.1"));
-                assert expr.len() == 4;
+              Axiom(Some(actual_label), expr) => {
+                assert *actual_label == label;
+                assert expr.len() == expr_len;
               }
               _ => fail
             }
         });
-        match ok {
-          true => (),
-          false => fail ~"oops."
+        match result {
+          Ok(()) => (),
+          Err(msg) => fail msg
         }
+    }
+
+
+    #[test]
+    fn test_1_axiom() {
+        test_axiom(@~"axiom.1 $a |- x = x $.", ~"axiom.1", 4)
+    }
+
+    #[test]
+    fn test_2_axioms() {
+        test_axiom(@~"axiom.1 $a |- x = x $. axiom.1 $a |- x = x $.",
+                   ~"axiom.1", 4)
     }
 }
