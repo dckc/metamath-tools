@@ -45,31 +45,35 @@ pub struct AboutSt {
 
 
 //TODO: let thunk return a bool to stop
-fn each_statement(text: rope::Rope, thunk: fn&(&Statement))
+pub fn each_statement(text: &str, thunk: fn&(&Statement))
     -> Result<(), ~str> {
     enum CharClass { Space, Printable, BadChar }
 
     enum State {
-        Start,
+        Sep, // inter-token space
         StLabel,
-        ISpace,
         StKeyword,
         StExpr,
-        TSpace,
 
+        CommentStart,
+        CommentSpace,
+        CommentDollar,
+        Comment,
+        CommentEnd,
+
+        TSpace, // trailing space. EOF OK.
         BadSyntax, // line, col?
     }
 
-    let mut state = Start;
-    let mut after_space = Start;
+    let mut state = Sep;
+    let mut after_space = StLabel;
     let mut ch1 = '\u0000'; // LL(2) look-behind
     let mut keyword = _c;
     let mut label: Option<Label> = None;
     let mut expr: ~[Symbol] = ~[];
-    let mut pos = 0;
-    let mut tok_start: Option<uint> = None;
+    let mut tok: Option<~str> = None;
 
-    do rope::loop_chars(text) |ch| {
+    do text.all() |ch| {
         let cclass =
             if(" \t\r\n\x0A".contains_char(ch)) { Space }
             else if (ch > '\u007F' || ch < ' ') { BadChar }
@@ -84,70 +88,109 @@ fn each_statement(text: rope::Rope, thunk: fn&(&Statement))
                state, cclass, is_label, ch1, ch);
 
         state = match (state, cclass, is_label, ch1, ch) {
-          (_, BadChar, _, _, _) => BadSyntax,
+          (_, BadChar, _, _, _) => { debug!("bad char: %c", ch); BadSyntax },
 
-          (Start, Space, _, _, _) => Start,
-          (Start, Printable, true, _, _) => { tok_start = Some(pos); StLabel },
-          (Start, _, _, _, _) => BadSyntax,  // not implemented
-          
+          (Sep, Space, _, _, _) => Sep,
+          (Sep, Printable, _, _, _) => { tok = Some(~""); after_space},
+
           (StLabel, Printable, true, _, _) => StLabel,
-          (StLabel, Space, _, _, _) => {
-            match tok_start {
-              Some(where) => label = Some(Label(
-                  to_str(rope::sub_chars(text, where, pos - where)))),
-              None => fail ~"StLabel requires tok_start = Some(where)"
+          (StLabel, Printable, false, '$', '(') => CommentStart,
+          (StLabel, Printable, false, _, '$') => {
+            if (tok.map_default(0, |what| what.len()) > 0) {
+                debug!("expected space after label");
+                BadSyntax
+            } else {
+                label = None;
+                StKeyword
             }
-            after_space = StKeyword;
-            ISpace
           }
-          (StLabel, _, _, _, _) => BadSyntax,
+          (StLabel, Printable, false, _, _) => {
+            debug!("bad label char: %c", ch);
+            BadSyntax
+          }
+          (StLabel, Space, _, _, _) => {
+            label = Some(Label(tok.get())); // non-implicitly-copyable... hmm..
+            after_space = StKeyword;
+            Sep
+          }
           
-          (ISpace, Space, _, _, _) => ISpace,
-          (ISpace, Printable, _, _, _) => after_space,
-
+          (StKeyword, Printable, _, '$', '(') => CommentStart,
           (StKeyword, Printable, _, '$', 'a') => {
             keyword = _a;
             expr = ~[];
-            tok_start = None;
+            tok = None;
             StExpr
-          },
-          (StKeyword, _, _, _, _) => BadSyntax,
+          }
+          (StKeyword, _, _, _, _) => {
+            debug!("$c etc. not implemented");
+            BadSyntax
+          }
 
+          (StExpr, _, _, '$', '(') => { after_space = StExpr; CommentStart}
           (StExpr, _, _, '$', '.') => {
             let statement = match keyword {
               _a => Axiom(copy label, copy expr),
               _ => fail fmt!("not implemented: %?", keyword)
             };
             thunk(&statement);
+            after_space = StLabel;
             TSpace
           }
-          (StExpr, _, _, '$', _)  => BadSyntax,
+          (StExpr, _, _, '$', _)  => {
+              debug!("$ not allowed in expression.");
+              BadSyntax
+          }
           (StExpr, Printable, _, _, _) => {
-            if (tok_start.is_none()) { tok_start = Some(pos) }
+            if (tok.is_none()) { tok = Some(~"") }
             StExpr
           }
           (StExpr, Space, _, _, _) => {
-            match tok_start {
-              Some(where) => {
-                expr.push(Symbol(
-                    to_str(rope::sub_chars(text, where, pos - where))));
+            match tok {
+              Some(what) => {
+                expr.push(Symbol(copy what));
               }
               _ => () // leading space
             }
-            tok_start = None;
-            StExpr
+            tok = None;
+            after_space = StExpr;
+            Sep
           }
 
-          // Trailing space
-          (TSpace, Space, _, _, _) => TSpace,
-          (TSpace, Printable, true, _, _) => { tok_start = Some(pos); StLabel },
-          (TSpace, _, _, _, _) => BadSyntax,  // not implemented
+          (CommentStart, Space, _, '(', _) => CommentSpace,
+          (CommentStart, _, _, _, _) => {
+              debug!("space expected after $(");
+              BadSyntax
+          }
 
-          (BadSyntax, _, _, _, _) => fail fmt!("unexpected state: %?", state)
+          (CommentSpace, _, _, _, '$') => CommentDollar,
+          (CommentSpace, Space, _, _, _) => CommentSpace,
+          (CommentSpace, Printable, _, _, _) => Comment,
+
+          (CommentDollar, _, _, '$', ')') => TSpace,
+          (CommentDollar, Space, _, _, _) => CommentSpace,
+          (CommentDollar, _, _, _, _) => Comment,
+
+          (Comment, Space, _, _, _) => CommentSpace,
+          (Comment, _, _, '$', ')') => {
+              debug!("space expected before $(");
+              BadSyntax
+          }
+          (Comment, _, _, _, _) => Comment,
+
+          (TSpace, Space, _, _, _) => TSpace,
+          (TSpace, _, _, _, _) => { tok = Some(~""); after_space }
+
+          (BadSyntax, _, _, _, _) => fail fmt!("unexpected state: %?", state),
+          (_, Space, _, _, _) => fail ~"compiler thinks this isn't covered",
+          (_, Printable, _, _, _) => fail ~"compiler thinks this isn't covered"
         };
 
         ch1 = ch;
-        pos += 1;
+        tok = match tok {
+          Some(s) => Some(s + str::from_char(ch)),
+          None => tok
+        };
+
         match state {
             BadSyntax => false,
             _ => true
@@ -157,8 +200,8 @@ fn each_statement(text: rope::Rope, thunk: fn&(&Statement))
     match state {
       TSpace => Ok(()),
       // TODO: count lines, show current line
-      _ => Err(fmt!("parse failed at position %u '%c' in %?",
-                    pos, rope::char_at(text, pos), state))
+      _ => Err(fmt!("parse failed after '%c' of %u in %?",
+                    ch1, text.len(), state))
     }
 }
 
@@ -177,8 +220,7 @@ fn to_str(text: rope::Rope) -> ~str {
 #[cfg(test)]
 mod test {
     fn test_axiom(txt: @~str, label: ~str, expr_len: uint) {
-        let doc = rope::of_str(txt);
-        let result = (do each_statement(doc) |st| {
+        let result = (do each_statement(*txt) |st| {
             debug!("each statement: %?", st);
             match *st {
               Axiom(Some(actual_label), expr) => {
@@ -204,5 +246,20 @@ mod test {
     fn test_2_axioms() {
         test_axiom(@~"axiom.1 $a |- x = x $. axiom.1 $a |- x = x $.",
                    ~"axiom.1", 4)
+    }
+
+    #[test]
+    fn test_comment_0_axioms() {
+        test_axiom(@~"$( hi $)", ~"", 0)
+    }
+
+    #[test]
+    fn test_empty_comment() {
+        test_axiom(@~"$( $)", ~"", 0)
+    }
+
+    #[test]
+    fn test_comment_1_axioms() {
+        test_axiom(@~"$( hi $) axiom.1 $a |- x = x $.", ~"axiom.1", 4)
     }
 }

@@ -18,7 +18,8 @@ mmfsm: mmfsm.rs
 check: mmparse
 	RUST_THREADS=$(RUST_THREADS) RUST_LOG=$(RUST_LOG) ./mmparse
 
-mmutil: lib mmutil.rs
+mmutil: mmutil.rs mmfsm.rs
+	$(RUST) --lib mmfsm.rs
 	$(RUST) -L . mmutil.rs
 
 # TODO: build libmmparse-*.so only when necessary
