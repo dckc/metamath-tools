@@ -1,10 +1,7 @@
 extern mod std;
+use mod std::rope;
 
-extern mod rparse;
-use rparse::*;  //{StringParsers};
-
-extern mod mmparse;
-use mmparse::basic_syntax::{Statement, KeywordStatement, white_space};
+extern mod mmfsm;
 
 fn main() {
     let argv = os::args();
@@ -14,10 +11,8 @@ fn main() {
         fail usage;
     }
 
-    enum Production { Comments, Statements, Each };
-    let production_flags = ~[(Comments, "-c"),
-                             (Statements, "-s"),
-                             (Each, "-e")];
+    enum Production { Statements };
+    let production_flags = ~[(Statements, "-s")];
 
     let production = match (
         production_flags.find(
@@ -31,9 +26,7 @@ fn main() {
     match io::read_whole_file_str(&input_fn) {
       Ok(txt) => {
         match production {
-          Comments => do_comments(@input_fn.to_str(), txt),
-          Statements => do_kw(@input_fn.to_str(), txt),
-          Each => do_each(@input_fn.to_str(), txt)
+          Statements => do_statements(@input_fn.to_str(), txt),
         }
       }
       Err(msg) => {
@@ -42,48 +35,26 @@ fn main() {
     }
 }
 
-fn do_each(input_fn: @~str, txt: &str) {
-    let r = mmparse::basic_syntax::each_statement( |st| {
+fn do_statements(_input_fn: @~str, txt: &str) {
+    debug!("%s: %u bytes", *_input_fn, txt.len());
+
+    let r = do mmfsm::each_statement(txt) |st| {
         io::println("thunk!");
         show_doc1(st)
-    }).parse(input_fn, txt);
+    };
     match r {
       Ok(()) => (),
-      Err(x) => fail fmt!("%?", x)
+      Err(x) => fail x
     }
 }
 
 
-fn do_kw(input_fn: @~str, txt: &str) {
-    let actual = mmparse::basic_syntax::statements().everything(white_space())
-        .parse(input_fn, txt);
-    //io::println(fmt!("%?", actual));
-
-    match actual {
-      Ok(sts) => show_doc(sts),
-      Err(x) => fail fmt!("%?", x)
-    }
-}
-
-fn show_doc(sts: @~[@~Statement]) {
-    for sts.each() |st| { show_doc1(*st) }
-}
-
-fn show_doc1(st: @~Statement) {
-    match **st {
-      KeywordStatement(s) => {
-        match (s.doc, s.label) {
-          (Some(d), Some(l)) => io::println(fmt!("%s: %s", *l, *d)),
-          _ => ()
-        }
+fn show_doc1(st: &mmfsm::Statement) {
+    match *st {
+      mmfsm::Axiom(mmfsm::Label(label), _) => {
+        io::println(fmt!("%s: ...", label))
       }
       _ => ()
     }
-}
-
-fn do_comments(input_fn: @~str, txt: &str) {
-    let actual = mmparse::preliminaries::comments()
-        .parse(input_fn, txt);
-    io::println(fmt!("%?", actual))
 }
         

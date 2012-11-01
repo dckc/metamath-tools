@@ -33,7 +33,11 @@ enum Symbol = ~str;
 pub enum Statement {
     BlockStart,
     BlockEnd,
-    Axiom(/* StDoc ,*/ Option<Label>, ~[Symbol])
+    Constants(~[Symbol]),
+    Variables(~[Symbol]),
+    FloatingHyp(Label, Symbol, Symbol),
+    Antecedent(Label, ~[Symbol]),
+    Axiom(/* StDoc ,*/ Label, ~[Symbol])
 }
 
 enum StDoc = uint;
@@ -115,22 +119,44 @@ pub fn each_statement(text: &str, thunk: fn&(&Statement))
           }
           
           (StKeyword, Printable, _, '$', '(') => CommentStart,
-          (StKeyword, Printable, _, '$', 'a') => {
-            keyword = _a;
+          (StKeyword, Printable, _, '$', '{') => {
+            thunk(&BlockStart);
+            after_space = StLabel;
+            TSpace
+          }
+          (StKeyword, Printable, _, '$', '}') => {
+            thunk(&BlockEnd);
+            after_space = StLabel;
+            TSpace
+          }
+          (StKeyword, Printable, _, '$', k) => {
+            keyword = match k {
+              'c' => _c,
+              'v' => _v,
+              'f' => _f,
+              'e' => _e,
+              'a' => _a,
+              _ => fail ~"$v etc. not implemented@@"
+            };
             expr = ~[];
             tok = None;
             StExpr
           }
           (StKeyword, _, _, _, _) => {
-            debug!("$c etc. not implemented");
+            debug!("$c etc. not implemented@@");
             BadSyntax
           }
 
           (StExpr, _, _, '$', '(') => { after_space = StExpr; CommentStart}
           (StExpr, _, _, '$', '.') => {
-            let statement = match keyword {
-              _a => Axiom(copy label, copy expr),
-              _ => fail fmt!("not implemented: %?", keyword)
+            let statement = match (label, keyword, expr.len()) {
+              (None, _c, _) => Constants(copy expr),
+              (None, _v, _) => Variables(copy expr),
+              (Some(l), _f, 2) => FloatingHyp(copy l,
+                                              copy expr[0], copy expr[1]),
+              (Some(l), _e, _) => Antecedent(copy l, copy expr),
+              (Some(l), _a, _) => Axiom(copy l, copy expr),
+              _ => fail fmt!("not implemented: %? / %?", label, keyword)
             };
             thunk(&statement);
             after_space = StLabel;
@@ -178,6 +204,12 @@ pub fn each_statement(text: &str, thunk: fn&(&Statement))
           (Comment, _, _, _, _) => Comment,
 
           (TSpace, Space, _, _, _) => TSpace,
+          (TSpace, _, _, _, '$') => { 
+            match after_space {
+              StLabel => StKeyword,
+              _ => after_space
+            }
+          }
           (TSpace, _, _, _, _) => { tok = Some(~""); after_space }
 
           (BadSyntax, _, _, _, _) => fail fmt!("unexpected state: %?", state),
@@ -223,7 +255,7 @@ mod test {
         let result = (do each_statement(*txt) |st| {
             debug!("each statement: %?", st);
             match *st {
-              Axiom(Some(actual_label), expr) => {
+              Axiom(actual_label, expr) => {
                 assert *actual_label == label;
                 assert expr.len() == expr_len;
               }
