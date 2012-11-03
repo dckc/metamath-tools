@@ -38,9 +38,9 @@ fn main() {
 fn do_statements(_input_fn: @~str, txt: &str) {
     debug!("%s: %u bytes", *_input_fn, txt.len());
 
-    let r = do mmfsm::each_statement(txt) |label, kw, expr| {
+    let r = do mmfsm::each_statement(txt) |label, kw, expr, pf| {
         io::println("thunk!");
-        show_doc1(label, kw, expr)
+        show_doc1(label, kw, expr, pf)
     };
     match r {
       Ok(()) => (),
@@ -51,9 +51,10 @@ fn do_statements(_input_fn: @~str, txt: &str) {
 
 fn show_doc1(label: &Option<mmfsm::Label>,
              kw: mmfsm::Keyword,
-             expr: &[mmfsm::Symbol]) {
+             _expr: &[mmfsm::Symbol],
+             _pf: &Option<mmfsm::Proof>) {
     match *label {
-      Some(l) => io::println(fmt!("%s %? %? ...", *l, kw, expr)),
+      Some(l) => io::println(fmt!("%s %? ...", l, kw)),
       _ => ()
     }
 }
