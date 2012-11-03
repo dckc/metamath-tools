@@ -24,17 +24,17 @@ use core::vec::{any};
 extern mod std;
 use std::rope;
 
-enum Keyword {
-    _open, _close, _c, _v, _f, _e, _d, _a, /*_p*/
+pub enum Keyword {
+    _open, _close, _c, _v, _f, _e, _d, _a, _p
 }
 
-struct Proof {
-    labels: @[Label],
-    digits: Option<~str>
+pub enum Proof {
+    FullProof(~[Label]),
+    /*CompressedProof(@[Label], ~str)*/
 }
 
-pub type Label = @~str;
-pub type Symbol = @~str;
+pub type Label = ~str;
+pub type Symbol = ~str;
 
 enum StDoc = uint;
 pub struct AboutSt {
@@ -45,18 +45,14 @@ pub struct AboutSt {
 
 
 
-//@@@@@ suppress these warnings until I figure out what I'm after.
-#[allow(non_implicitly_copyable_typarams)]
-
 //TODO: let thunk return a bool to stop
 pub fn each_statement(text: &str,
                       thunk: fn(label: &Option<Label>,
                                 kw: Keyword,
-                                expr: &[Symbol]/*,
-                                    pf: Option<Proof>*/))
+                                expr: &[Symbol],
+                                pf: &Option<Proof>))
     -> Result<(), ~str> {
     enum CharClass { Space, Printable, BadChar }
-    enum IsLabelChar { NotLabel, IsLabel }
 
     enum SepState {
         NeedSpace,
@@ -68,39 +64,50 @@ pub fn each_statement(text: &str,
 
     enum PfKind {
         Normal,
-        Compressed
+        /*Compressed*/
     }
 
     enum StPart {
-        StLabelKw(Option<Label>), // line, col?
+        StLabelKw(~mut ~str), // line, col?
         StExpr(Option<Label>, Keyword,
-               @[Symbol], Option<@~str>),
-/*
+               ~mut~[Symbol], ~mut ~str),
         StPf(Option<Label>, Keyword, ~[Symbol],
-             PfKind, ~[Label], Option<~str>),
+             PfKind, ~mut~[Label], ~mut ~str),
+/*
         StPfDigits(Option<Label>, Keyword, ~[Symbol],
                    ~[Label], ~str),
 */
 
     }
+
+    let is_label = |ch: char| {
+        any(&[('A', 'Z'), ('a', 'z'), ('0', '9')],
+            |r| match r { &(lo, hi) => ch >= lo && ch <= hi })
+            || "'-_.".contains_char(ch)
+    };
+
     type State = Result<Option<SepState>, ~str>;
 
     let mksp = |sp: SepState| { @Ok(Some(sp)) };
-    let start_part = || { @StLabelKw(None) };
+    let stay = || { @Ok(None) };
+    let start_part = || { @StLabelKw(~mut~"") };
+
+    fn build_tok(tok: &mut ~str, ch: char) {
+        str::push_char(tok, ch)
+    }
+    fn build_toklist(toks: &mut ~[~str], tok: &~mut ~str, ch:char) {
+        str::push_char(*tok, ch);
+        toks.push(copy **tok);
+        // there's gotta be a better way
+        while(tok.len() > 0) { str::pop_char(*tok); }
+    }
+    let finish = |tok: &~mut~str| -> Option<~str> {
+        if (tok.len() > 0) { Some(tok.to_unique()) } else { None }
+    };
 
     let mut state = mksp(SeenSpace);
     let mut part = start_part();
     let mut prev_ch = '\x00';
-
-    let build_tok = |tok: &Option<@~str>, ch|  {
-        // TODO: reduce copying
-        let sch = @str::from_char(ch);
-        Some(tok.map_default(sch, |chars| @(*chars + *sch)))
-    };
-    let build_toklist = |toks: @[@~str], tok: Option<@~str>| {
-        tok.map_default(toks, |stropt| toks + @[*stropt])
-    };
-
 
     do text.all() |ch| {
         let cclass =
@@ -131,86 +138,113 @@ pub fn each_statement(text: &str,
           },
 
           @Ok(None) => {
-              let is_label = (
-                  if(any(&[('A', 'Z'), ('a', 'z'), ('0', '9')],
-                         |r| match r { &(lo, hi) => ch >= lo && ch <= hi })
-                     || "'-_.".contains_char(ch)) { IsLabel } else { NotLabel }
-              );
-              debug!("part: %? is_label: %?", part, is_label);
+              debug!("part: %?", part);
 
-              match (part, cclass, is_label, prev_ch, ch) {
-                (_, BadChar, _, _, _) => @Err(fmt!("bad char: %c", ch)),
-                (_, _, _, '$', '(') => mksp(DollarOpen),
+              match (part, cclass, prev_ch, ch) {
+                (_, BadChar, _, _) => @Err(fmt!("bad char: %c", ch)),
+                (_, _, '$', '(') => mksp(DollarOpen),
 
                 // $_
                 // ll $_
-                (@StLabelKw(*), _, _, _, '$') => copy state,
+                (@StLabelKw(*), _, _, '$') => copy state,
                 // ${_
-                (@StLabelKw(l), _, _, '$', '{') => {
-                  thunk(&l, _open, &[]/*, pf: None*/);
+                (@StLabelKw(l), _, '$', '{') => {
+                  thunk(&finish(&l), _open, &[], &None);
                   part = start_part();
                   mksp(NeedSpace)
                 }
                 // $}_
-                (@StLabelKw(l), _, _, '$', '}') => {
-                  thunk(&l, _close, &[]/*, pf: None*/);
+                (@StLabelKw(l), _, '$', '}') => {
+                  thunk(&finish(&l), _close, &[], &None);
                   part = start_part();
                   mksp(NeedSpace)
                 }
-                (@StLabelKw(l), _, _, '$', kch) => {
+                (@StLabelKw(l), _, '$', kch) => {
                   match decode_kw(kch) {
                     Some(k) => {
-                      part = @StExpr(copy l, k, @[], None);
+                      part = @StExpr(finish(&l), k, ~mut~[], ~mut~"");
                       mksp(NeedSpace)
                     }
                     None => @Err(fmt!("Bad keyword: [$%c]", kch))
                   }
                 }
                 // ll _$a
-                (@StLabelKw(l), Space, _, _, _) => {
-                  part = @StLabelKw(build_tok(&l, prev_ch));
+                (@StLabelKw(l), Space, _, _) => {
+                  build_tok(l, prev_ch);
                   mksp(SeenSpace)
                 }
                 // l_l $a
-                (@StLabelKw(l), Printable, IsLabel, _, _) => {
-                  part = @StLabelKw(build_tok(&l, prev_ch));
-                  @Ok(None)
-                }
-                // l_$a
-                (@StLabelKw(_), _, _, _, _) => {
-                  @Err(fmt!("bad label char [%c]", ch))
+                (@StLabelKw(l), Printable, _, _) => {
+                  match is_label(prev_ch) {
+                    true => {
+                      build_tok(l, prev_ch);
+                      stay()
+                    }
+                    _ => @Err(fmt!("bad label char [%c]", ch))
+                  }
+
                 }
 
                 // ll $a ss _
-                (@StExpr(*), Space, _, '$', _) => {
+                (@StExpr(*), Space, '$', _) => {
                   @Err(~"$ followed by space in Expr")
                 }
-                (@StExpr(l, kw, syms, tok), Space, _, _, _) => {
-                  let syms2 = build_toklist(syms, build_tok(&tok, prev_ch));
-                  part = @StExpr(copy l, kw, syms2, None);
+                (@StExpr(_, _, syms, tok), Space, _, _) => {
+                  build_toklist(syms, &tok, prev_ch);
                   mksp(SeenSpace)
                 }
                 // ll $p ss $_
-                (@StExpr(*), _, _, _, '$') => state,
-                /*
-                // $=_
-                (StExpr(l, kw, expr, tok), _, _, Dollar, '=') => {
-                assert tok.is_none();
-                @Sep(NeedSpace, @StPf(l, kw, expr, Normal, ~[], None))
+                (@StExpr(*), _, _, '$') => state,
+                // ll $p ss $=_
+                (@StExpr(l, kw, expr, tok), _, '$', '=') => {
+                  assert tok.len() == 0;
+                  part = @StPf(copy l, kw, copy *expr,
+                               Normal, ~mut~[], ~mut~"");
+                  mksp(NeedSpace)
                 }
-                */
                 // ll $a ss $._
-                (@StExpr(l, kw, expr, tok), _, _, '$', '.') => {
-                  assert tok.is_none(); // we can only get here after space
-                  thunk(&l, kw, expr/*, pf: None*/);
+                (@StExpr(l, kw, syms, tok), _, '$', '.') => {
+                  assert tok.len() == 0;
+                  let expr = copy *syms;
+                  thunk(&l, kw, expr, &None);
                   part = start_part();
                   mksp(NeedSpace)
                 }
                 // $* ss_
                 // $* s_
-                (@StExpr(l, kw, syms, tok), Printable, _, _, _) => {
-                  part = @StExpr(l, kw, syms, build_tok(&tok, prev_ch));
-                  @Ok(None)
+                (@StExpr(_, _, _, tok), Printable, _, _) => {
+                    build_tok(tok, prev_ch);
+                    stay()
+                }
+
+                // ll $p ss $= _
+                // ll $p ss $= l _
+                (@StPf(_, _, _, Normal, labels, tok),
+                 Space, _, _) => {
+                  build_toklist(labels, &tok, prev_ch);
+                  mksp(SeenSpace)
+                }
+                // ll $p ss $= l $_
+                (@StPf(_, _, _, Normal, _, _), _, _, '$') => stay(),
+                // .. $$= ll $._
+                (@StPf(l, kw, expr, Normal, labels, tok),
+                 _, '$', '.') => {
+                  assert tok.len() == 0;
+                  let steps = copy *labels;
+                  thunk(&l, kw, expr,
+                        &Some(FullProof(steps)));
+                  part = start_part();
+                  mksp(NeedSpace)
+                }
+                // ll $p ss $= l_
+                (@StPf(_, _, _, Normal, _, tok), _, _, _) => {
+                  match is_label(prev_ch) {
+                    true => {
+                      build_tok(tok, prev_ch);
+                      stay()
+                    }
+                    _ => @Err(fmt!("bad label char in proof: %c", prev_ch))
+                  }
                 }
               }
           }
@@ -229,32 +263,6 @@ pub fn each_statement(text: &str,
       _ => Err(fmt!("parse failed in %?", state))
     }
 }
-
-/*
-          (StPf(l, kw, expr, Normal, labels, tok),
-           Space, _, _, _) => {
-            // factor out build_tokens?
-            let labels2 = match tok {
-              Some(chars) => labels + ~[Label(copy chars)],
-              _ => labels
-            };
-            @Sep(SeenSpace, @StPf(l, kw, expr, Normal, labels2, None))
-          }
-          // ll $p ss $= l_
-          (StPf(l, kw, syms, Normal, labels, tok),
-           Printable, true, NoDelim, _) => {
-            @StPf(l, kw, syms, Normal, labels, build_tok(tok, ch))
-          }
-          // .. $$= ll $._
-          (StPf(l, kw, expr, Normal, labels, tok), _, _, Dollar, '.') => {
-            assert tok.is_none();
-            let sp = StatementParts{
-                label: l, kw: kw, expr: expr,
-                pf: Some(Proof{labels: labels, digits: None})};
-            thunk(&sp);
-            @Sep(NeedSpace, @StLabel(None))
-          }
-*/
 
 /*
         match (label, kw, expr.len(), pf_opt) {
@@ -291,7 +299,7 @@ fn decode_kw(kch: char) -> Option<Keyword> {
     do [('c', _c), ('v', _v),
         ('f', _f), ('e', _e),
         ('d', _d),
-        ('a', _a)/*, ('p', _p)*/].find |ea| {
+        ('a', _a), ('p', _p)].find |ea| {
         match ea {
           (ltr, _) => ltr == kch
         }
@@ -302,17 +310,19 @@ fn decode_kw(kch: char) -> Option<Keyword> {
 #[cfg(test)]
 mod test {
     fn test_statement(txt: @~str,
-                      label: Option<~str>,
+                      label: Option<Label>,
                       expr_len: uint, sym: &str) {
-        let result = (do each_statement(*txt) |l, kw, expr| {
-            debug!("each statement: %? %? %?", l, kw, expr);
+        let result = (do each_statement(*txt) |l, kw, expr, pf| {
+            debug!("each statement: %?", (l, kw, expr, pf));
+            assert *l == label;
+            /*@@
             match label {
               None => assert l.is_none(),
-              Some(expected) => assert expected == *l.get()
-            }
+              Some(expected) => assert expected == l.get()
+            }*/
             assert expr.len() == expr_len;
             if (expr_len > 0) {
-                assert sym == *expr[0];
+                assert sym == expr[0];
             }
         });
         match result {
@@ -359,9 +369,15 @@ mod test {
     }
 
     #[test]
+    fn test_pf() {
+        test_statement(@~"th1 $p s1 s2 $= QED $.",
+                       Some(~"th1"), 2, ~"s1")
+    }
+
+    #[test]
     fn require_space_after_kw() {
-        do each_statement(~"axiom.1 $a|- x = x $.") |l, kw, expr| {
-            debug!("bad statement: %?", (l, kw, expr));
+        do each_statement(~"axiom.1 $a|- x = x $.") |l, kw, expr, pf| {
+            debug!("bad statement: %?", (l, kw, expr, pf));
             fail
         };
     }
