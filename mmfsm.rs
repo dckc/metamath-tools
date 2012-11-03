@@ -30,7 +30,7 @@ pub enum Keyword {
 
 pub enum Proof {
     FullProof(~[Label]),
-    /*CompressedProof(@[Label], ~str)*/
+    CompressedProof(~[Label], ~str)
 }
 
 pub type Label = ~str;
@@ -170,19 +170,17 @@ pub fn each_statement(text: &str,
                 }
                 // ll _$a
                 (@StLabelKw(l), Space, _, _) => {
-                  build_tok(l, prev_ch);
-                  mksp(SeenSpace)
+                  match is_label(prev_ch) {
+                    true => { build_tok(l, prev_ch); mksp(SeenSpace) }
+                    _ => @Err(fmt!("bad label char [%c]", prev_ch))
+                  }
                 }
                 // l_l $a
                 (@StLabelKw(l), Printable, _, _) => {
                   match is_label(prev_ch) {
-                    true => {
-                      build_tok(l, prev_ch);
-                      stay()
-                    }
-                    _ => @Err(fmt!("bad label char [%c]", ch))
+                    true => { build_tok(l, prev_ch); stay() }
+                    _ => @Err(fmt!("bad label char [%c]", prev_ch))
                   }
-
                 }
 
                 // ll $a ss _
@@ -221,8 +219,15 @@ pub fn each_statement(text: &str,
                 // ll $p ss $= l _
                 (@StPf(_, _, _, Normal, labels, tok),
                  Space, _, _) => {
-                  build_toklist(labels, &tok, prev_ch);
-                  mksp(SeenSpace)
+                  // TODO: integrate is_label into build_tok, build_toklist
+                  match is_label(prev_ch) {
+                    true => {
+                      build_toklist(labels, &tok, prev_ch);
+                      mksp(SeenSpace)
+                    }
+                    false => @Err(fmt!("bad label char in proof: [%c]",
+                                       prev_ch))
+                  }
                 }
                 // ll $p ss $= l $_
                 (@StPf(_, _, _, Normal, _, _), _, _, '$') => stay(),
@@ -310,20 +315,13 @@ fn decode_kw(kch: char) -> Option<Keyword> {
 #[cfg(test)]
 mod test {
     fn test_statement(txt: @~str,
-                      label: Option<Label>,
-                      expr_len: uint, sym: &str) {
+                      check: fn(l: &Option<Label>,
+                                kw: Keyword,
+                                expr: &[Symbol],
+                                pf: &Option<Proof>)){
         let result = (do each_statement(*txt) |l, kw, expr, pf| {
             debug!("each statement: %?", (l, kw, expr, pf));
-            assert *l == label;
-            /*@@
-            match label {
-              None => assert l.is_none(),
-              Some(expected) => assert expected == l.get()
-            }*/
-            assert expr.len() == expr_len;
-            if (expr_len > 0) {
-                assert sym == expr[0];
-            }
+            check(l, kw, expr, pf);
         });
         match result {
           Ok(()) => (),
@@ -331,47 +329,86 @@ mod test {
         }
     }
 
+    fn test_axiom(txt: @~str,
+                  label: Label,
+                  expr_len: uint, sym: &str) {
+        do test_statement(txt) |l, kw, expr, pf| {
+            assert *l == Some(copy label);
+            match kw { _a => (), _ => fail }
+            assert expr.len() == expr_len;
+            if (expr_len > 0) {
+                assert sym == expr[0];
+            }
+            assert pf.is_none()
+        }
+    }
+
 
     #[test]
     fn test_1_axiom() {
-        test_statement(@~"axiom.1 $a |- x = x $.",
-                       Some(~"axiom.1"), 4, ~"|-")
+        test_axiom(@~"axiom.1 $a |- x = x $.",
+                   ~"axiom.1", 4, ~"|-")
     }
 
     #[test]
     fn test_2_axioms() {
-        test_statement(@~"axiom.1 $a |- x = x $. axiom.1 $a |- x = x $.",
-                       Some(~"axiom.1"), 4, ~"|-")
+        test_axiom(@~"axiom.1 $a |- x = x $. axiom.1 $a |- x = x $.",
+                   ~"axiom.1", 4, ~"|-")
     }
 
     #[test]
     fn test_comment_0_axioms() {
-        test_statement(@~"$( hi $)",
-                       None, 0, ~"")
+        test_statement(@~"$( hi $)", |_l, _k, _e, _p| ())
     }
 
     #[test]
     fn test_empty_comment() {
-        test_statement(@~"$( $)",
-                       None, 0, ~"")
+        test_statement(@~"$( $)", |_l, _k, _e, _p| ())
     }
 
     #[test]
     fn test_comment_1_axioms() {
-        test_statement(@~"$( hi $) axiom.1 $a |- x = x $.",
-                       Some(~"axiom.1"), 4, ~"|-")
+        test_axiom(@~"$( hi $) axiom.1 $a |- x = x $.",
+                   ~"axiom.1", 4, ~"|-")
     }
 
     #[test]
     fn test_constants() {
-        test_statement(@~"$c 0 1 2 3 $.",
-                       None, 4, ~"0")
+        do test_statement(@~"$c 0 1 2 3 $.") |l, kw, expr, pf| {
+            match kw { _c => (), _ => fail }
+            assert l.is_none();
+            assert expr.len() == 4;
+            assert pf.is_none()
+        }
     }
 
     #[test]
     fn test_pf() {
-        test_statement(@~"th1 $p s1 s2 $= QED $.",
-                       Some(~"th1"), 2, ~"s1")
+        do test_statement(@~"th1 $p s1 s2 $= QED $.") |l, kw, expr, pf| {
+            match kw { _p => (), _ => fail }
+            assert *l == Some(~"th1");
+            assert expr.len() == 2;
+            assert expr[0] == ~"s1";
+            match *pf {
+              Some(FullProof(steps)) => assert steps[0] == ~"QED",
+              _ => fail
+            }
+        }
+    }
+
+    #[test]
+    fn compressed_pf() {
+        do test_statement(@~"th1 $p s1 s2 $= ( a1 a2 ) ABC $.")
+            |_l, kw, _expr, pf| {
+            match kw { _p => (), _ => fail }
+            match *pf {
+              Some(CompressedProof(steps, digits)) => {
+                assert steps[0] == ~"a1";
+                assert digits == ~"ABC";
+              }
+              _ => fail
+            }
+        }
     }
 
     #[test]
@@ -380,5 +417,17 @@ mod test {
             debug!("bad statement: %?", (l, kw, expr, pf));
             fail
         };
+    }
+
+    #[test]
+    fn single_char_bad_label() {
+        let result = do each_statement(~"( $a|- x = x $.") |l, kw, expr, pf| {
+            debug!("bad statement: %?", (l, kw, expr, pf));
+            fail
+        };
+        match result {
+          Ok(()) => fail ~"oops; should not have parsed",
+          Err(msg) => debug!("good: %s", msg)
+        }
     }
 }
