@@ -33,8 +33,8 @@ struct Proof {
     digits: Option<~str>
 }
 
-type Label = @~str;
-type Symbol = @~str;
+pub type Label = @~str;
+pub type Symbol = @~str;
 
 enum StDoc = uint;
 pub struct AboutSt {
@@ -72,8 +72,7 @@ pub fn each_statement(text: &str,
     }
 
     enum StPart {
-        StLabel(Option<Label>), // line, col?
-        StKeyword(Option<Label>),
+        StLabelKw(Option<Label>), // line, col?
         StExpr(Option<Label>, Keyword,
                @[Symbol], Option<@~str>),
 /*
@@ -87,7 +86,7 @@ pub fn each_statement(text: &str,
     type State = Result<Option<SepState>, ~str>;
 
     let mksp = |sp: SepState| { @Ok(Some(sp)) };
-    let start_part = || { @StLabel(None) };
+    let start_part = || { @StLabelKw(None) };
 
     let mut state = mksp(SeenSpace);
     let mut part = start_part();
@@ -137,51 +136,49 @@ pub fn each_statement(text: &str,
                          |r| match r { &(lo, hi) => ch >= lo && ch <= hi })
                      || "'-_.".contains_char(ch)) { IsLabel } else { NotLabel }
               );
-              debug!("is_label: %?", is_label);
+              debug!("part: %? is_label: %?", part, is_label);
 
               match (part, cclass, is_label, prev_ch, ch) {
                 (_, BadChar, _, _, _) => @Err(fmt!("bad char: %c", ch)),
                 (_, _, _, '$', '(') => mksp(DollarOpen),
 
-                // ll _$a
-                (@StLabel(l), Space, _, _, _) => {
-                  part = @StKeyword(build_tok(&l, prev_ch));
-                  mksp(SeenSpace)
-                }
-                // l_l $a
-                (@StLabel(l), Printable, IsLabel, _, _) => {
-                  part = @StLabel(build_tok(&l, prev_ch));
-                  @Ok(None)
-                }
-                // l_$a
-                (@StLabel(_), _, _, _, _) => {
-                  @Err(fmt!("bad label char [%c]", ch))
-                }
-
+                // $_
+                // ll $_
+                (@StLabelKw(*), _, _, _, '$') => copy state,
                 // ${_
-                (@StKeyword(l), _, _, '$', '{') => {
+                (@StLabelKw(l), _, _, '$', '{') => {
                   thunk(&l, _open, &[]/*, pf: None*/);
                   part = start_part();
                   mksp(NeedSpace)
                 }
                 // $}_
-                (@StKeyword(l), _, _, '$', '}') => {
+                (@StLabelKw(l), _, _, '$', '}') => {
                   thunk(&l, _close, &[]/*, pf: None*/);
                   part = start_part();
                   mksp(NeedSpace)
                 }
-                // $a_
-                (@StKeyword(l), _, _, '$', kch) => {
+                (@StLabelKw(l), _, _, '$', kch) => {
                   match decode_kw(kch) {
                     Some(k) => {
                       part = @StExpr(copy l, k, @[], None);
                       mksp(NeedSpace)
                     }
-                    None => @Err(fmt!("Bad keyword: $%c", kch))
+                    None => @Err(fmt!("Bad keyword: [$%c]", kch))
                   }
                 }
-                (@StKeyword(_), _, _, _, _) => {
-                  @Err(fmt!("expected keyword; got $%c", ch))
+                // ll _$a
+                (@StLabelKw(l), Space, _, _, _) => {
+                  part = @StLabelKw(build_tok(&l, prev_ch));
+                  mksp(SeenSpace)
+                }
+                // l_l $a
+                (@StLabelKw(l), Printable, IsLabel, _, _) => {
+                  part = @StLabelKw(build_tok(&l, prev_ch));
+                  @Ok(None)
+                }
+                // l_$a
+                (@StLabelKw(_), _, _, _, _) => {
+                  @Err(fmt!("bad label char [%c]", ch))
                 }
 
                 // ll $a ss _
@@ -227,7 +224,7 @@ pub fn each_statement(text: &str,
     };
 
     match (state, part) {
-      (@Ok(Some(_)), @StLabel(_)) => Ok(()),
+      (@Ok(Some(_)), @StLabelKw(_)) => Ok(()),
       // TODO: count lines, show current line
       _ => Err(fmt!("parse failed in %?", state))
     }
@@ -304,12 +301,19 @@ fn decode_kw(kch: char) -> Option<Keyword> {
 
 #[cfg(test)]
 mod test {
-    fn test_axiom(txt: @~str, label: &str, expr_len: uint, sym: &str) {
+    fn test_statement(txt: @~str,
+                      label: Option<~str>,
+                      expr_len: uint, sym: &str) {
         let result = (do each_statement(*txt) |l, kw, expr| {
             debug!("each statement: %? %? %?", l, kw, expr);
-            assert label == *l.get();
+            match label {
+              None => assert l.is_none(),
+              Some(expected) => assert expected == *l.get()
+            }
             assert expr.len() == expr_len;
-            assert sym == *expr[0];
+            if (expr_len > 0) {
+                assert sym == *expr[0];
+            }
         });
         match result {
           Ok(()) => (),
@@ -320,28 +324,38 @@ mod test {
 
     #[test]
     fn test_1_axiom() {
-        test_axiom(@~"axiom.1 $a |- x = x $.", ~"axiom.1", 4, ~"|-")
+        test_statement(@~"axiom.1 $a |- x = x $.",
+                       Some(~"axiom.1"), 4, ~"|-")
     }
 
     #[test]
     fn test_2_axioms() {
-        test_axiom(@~"axiom.1 $a |- x = x $. axiom.1 $a |- x = x $.",
-                   ~"axiom.1", 4, ~"|-")
+        test_statement(@~"axiom.1 $a |- x = x $. axiom.1 $a |- x = x $.",
+                       Some(~"axiom.1"), 4, ~"|-")
     }
 
     #[test]
     fn test_comment_0_axioms() {
-        test_axiom(@~"$( hi $)", ~"", 0, ~"|-")
+        test_statement(@~"$( hi $)",
+                       None, 0, ~"")
     }
 
     #[test]
     fn test_empty_comment() {
-        test_axiom(@~"$( $)", ~"", 0, ~"|-")
+        test_statement(@~"$( $)",
+                       None, 0, ~"")
     }
 
     #[test]
     fn test_comment_1_axioms() {
-        test_axiom(@~"$( hi $) axiom.1 $a |- x = x $.", ~"axiom.1", 4, ~"|-")
+        test_statement(@~"$( hi $) axiom.1 $a |- x = x $.",
+                       Some(~"axiom.1"), 4, ~"|-")
+    }
+
+    #[test]
+    fn test_constants() {
+        test_statement(@~"$c 0 1 2 3 $.",
+                       None, 4, ~"0")
     }
 
     #[test]
