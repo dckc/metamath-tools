@@ -18,26 +18,44 @@ tspace = space+ | EOF
 
 proof = '$=' space+ label+ '$'  # TODO: compressed proof
  */
+
 use core::vec::{any};
 
 extern mod std;
 use std::rope;
 
 enum Keyword {
-    _c, _v, _f, _e, _d, _a, _p
+    _open, _close, _c, _v, _f, _e, _d, _a, /*_p*/
 }
 
 enum Label = ~str;
 enum Symbol = ~str;
+
+struct Proof {
+    labels: ~[Label],
+    digits: Option<~str>
+}
+
+pub struct StatementParts {
+    label: Option<Label>,
+    kw: Keyword,
+    expr: ~[Symbol],
+/*    pf: Option<Proof>
+*/
+}
 
 pub enum Statement {
     BlockStart,
     BlockEnd,
     Constants(~[Symbol]),
     Variables(~[Symbol]),
+    Disjoint(~[Symbol]),
     FloatingHyp(Label, Symbol, Symbol),
     Antecedent(Label, ~[Symbol]),
-    Axiom(/* StDoc ,*/ Label, ~[Symbol])
+    Axiom(/* StDoc ,*/ Label, ~[Symbol]),
+/*
+    Theorem(Label, ~[Symbol], ~[Label], Option<~str>)
+*/
 }
 
 enum StDoc = uint;
@@ -48,34 +66,68 @@ pub struct AboutSt {
 }
 
 
+
+//@@@@@ suppress these warnings until I figure out what I'm after.
+#[allow(non_implicitly_copyable_typarams)]
+
 //TODO: let thunk return a bool to stop
-pub fn each_statement(text: &str, thunk: fn&(&Statement))
+pub fn each_statement(text: &str, thunk: fn&(&StatementParts))
     -> Result<(), ~str> {
     enum CharClass { Space, Printable, BadChar }
 
-    enum State {
-        Sep, // inter-token space
-        StLabel,
-        StKeyword,
-        StExpr,
-
-        CommentStart,
+    enum CommentState {
+        DollarOpen,
         CommentSpace,
-        CommentDollar,
-        Comment,
-        CommentEnd,
-
-        TSpace, // trailing space. EOF OK.
-        BadSyntax, // line, col?
+        CommentText,
     }
 
-    let mut state = Sep;
-    let mut after_space = StLabel;
-    let mut ch1 = '\u0000'; // LL(2) look-behind
-    let mut keyword = _c;
-    let mut label: Option<Label> = None;
-    let mut expr: ~[Symbol] = ~[];
-    let mut tok: Option<~str> = None;
+    enum PfKind {
+        Normal,
+        Compressed
+    }
+
+    enum InitialSpace {
+        NeedSpace, SeenSpace
+    }
+
+    enum DelimState {
+        NoDelim, Dollar
+    }
+
+    enum State {
+        Sep(InitialSpace, // seen initial space?
+            @State // next state (one level push-down automata)
+           ),
+        Comment(CommentState, @State), // TODO: ~str contents
+        StLabel(Option<~str>), // line, col?
+        StKeyword(Option<Label>),
+        StExpr(Option<Label>, Keyword,
+               ~[Symbol], Option<~str>),
+/*
+        StPf(Option<Label>, Keyword, ~[Symbol],
+             PfKind, ~[Label], Option<~str>),
+        StPfDigits(Option<Label>, Keyword, ~[Symbol],
+                   ~[Label], ~str),
+*/
+
+        BadSyntax(~str), // TODO: line, col
+    }
+
+    let mut state: @State = @Sep(SeenSpace, @StLabel(None));
+    // TODO change back to look-behind for building labels, symbols
+    let mut delim = NoDelim;
+
+/*
+    let check_block = |label: Option<Label>, block| {
+        match label {
+          Some(_) => BadSyntax(~"unexpected block after label"),
+          None => {
+            thunk(block);
+            TSpace
+          }
+        }
+    };
+*/
 
     do text.all() |ch| {
         let cclass =
@@ -88,179 +140,226 @@ pub fn each_statement(text: &str, thunk: fn&(&Statement))
             || "'-_.".contains_char(ch);
 
 
-        debug!("state: %? cclass: %? is_label: %? ch1: [%c] ch: [%c]",
-               state, cclass, is_label, ch1, ch);
+        debug!("state: %? cclass: %? is_label: %? delim: [%?] ch: [%c]",
+               state, cclass, is_label, delim, ch);
+        
+        state = match (*state, cclass, is_label, delim, ch) {
+          (_, BadChar, _, _, _) => @BadSyntax(fmt!("bad char: %c", ch)),
 
-        state = match (state, cclass, is_label, ch1, ch) {
-          (_, BadChar, _, _, _) => { debug!("bad char: %c", ch); BadSyntax },
-
-          (Sep, Space, _, _, _) => Sep,
-          (Sep, Printable, _, _, _) => { tok = Some(~""); after_space},
-
-          (StLabel, Printable, true, _, _) => StLabel,
-          (StLabel, Printable, false, '$', '(') => CommentStart,
-          (StLabel, Printable, false, _, '$') => {
-            if (tok.map_default(0, |what| what.len()) > 0) {
-                debug!("expected space after label");
-                BadSyntax
-            } else {
-                label = None;
-                StKeyword
-            }
-          }
-          (StLabel, Printable, false, _, _) => {
-            debug!("bad label char: %c", ch);
-            BadSyntax
-          }
-          (StLabel, Space, _, _, _) => {
-            label = Some(Label(tok.get())); // non-implicitly-copyable... hmm..
-            after_space = StKeyword;
-            Sep
-          }
-          
-          (StKeyword, Printable, _, '$', '(') => CommentStart,
-          (StKeyword, Printable, _, '$', '{') => {
-            thunk(&BlockStart);
-            after_space = StLabel;
-            TSpace
-          }
-          (StKeyword, Printable, _, '$', '}') => {
-            thunk(&BlockEnd);
-            after_space = StLabel;
-            TSpace
-          }
-          (StKeyword, Printable, _, '$', k) => {
-            keyword = match k {
-              'c' => _c,
-              'v' => _v,
-              'f' => _f,
-              'e' => _e,
-              'a' => _a,
-              _ => fail ~"$v etc. not implemented@@"
-            };
-            expr = ~[];
-            tok = None;
-            StExpr
-          }
-          (StKeyword, _, _, _, _) => {
-            debug!("$c etc. not implemented@@");
-            BadSyntax
-          }
-
-          (StExpr, _, _, '$', '(') => { after_space = StExpr; CommentStart}
-          (StExpr, _, _, '$', '.') => {
-            let statement = match (label, keyword, expr.len()) {
-              (None, _c, _) => Constants(copy expr),
-              (None, _v, _) => Variables(copy expr),
-              (Some(l), _f, 2) => FloatingHyp(copy l,
-                                              copy expr[0], copy expr[1]),
-              (Some(l), _e, _) => Antecedent(copy l, copy expr),
-              (Some(l), _a, _) => Axiom(copy l, copy expr),
-              _ => fail fmt!("not implemented: %? / %?", label, keyword)
-            };
-            thunk(&statement);
-            after_space = StLabel;
-            TSpace
-          }
-          (StExpr, _, _, '$', _)  => {
-              debug!("$ not allowed in expression.");
-              BadSyntax
-          }
-          (StExpr, Printable, _, _, _) => {
-            if (tok.is_none()) { tok = Some(~"") }
-            StExpr
-          }
-          (StExpr, Space, _, _, _) => {
-            match tok {
-              Some(what) => {
-                expr.push(Symbol(copy what));
+          // _ll $a ...
+          (Sep(_, next), Space, _, _, _) => @Sep(SeenSpace, next),
+          (Sep(SeenSpace, next), Printable, _, _, '$') => next,
+          (Sep(SeenSpace, next), Printable, _, _, _) => {
+            match *next {
+              StLabel(None) => @StLabel(Some(str::from_char(ch))),
+              StExpr(l, kw, syms, None) => {
+                @StExpr(l, kw, syms, Some(str::from_char(ch)))
               }
-              _ => () // leading space
-            }
-            tok = None;
-            after_space = StExpr;
-            Sep
-          }
-
-          (CommentStart, Space, _, '(', _) => CommentSpace,
-          (CommentStart, _, _, _, _) => {
-              debug!("space expected after $(");
-              BadSyntax
-          }
-
-          (CommentSpace, _, _, _, '$') => CommentDollar,
-          (CommentSpace, Space, _, _, _) => CommentSpace,
-          (CommentSpace, Printable, _, _, _) => Comment,
-
-          (CommentDollar, _, _, '$', ')') => TSpace,
-          (CommentDollar, Space, _, _, _) => CommentSpace,
-          (CommentDollar, _, _, _, _) => Comment,
-
-          (Comment, Space, _, _, _) => CommentSpace,
-          (Comment, _, _, '$', ')') => {
-              debug!("space expected before $(");
-              BadSyntax
-          }
-          (Comment, _, _, _, _) => Comment,
-
-          (TSpace, Space, _, _, _) => TSpace,
-          (TSpace, _, _, _, '$') => { 
-            match after_space {
-              StLabel => StKeyword,
-              _ => after_space
+              _ => next
             }
           }
-          (TSpace, _, _, _, _) => { tok = Some(~""); after_space }
+          (Sep(NeedSpace, _), Printable, _, _, _) => {
+            @BadSyntax(~"expected space")
+          }
 
-          (BadSyntax, _, _, _, _) => fail fmt!("unexpected state: %?", state),
-          (_, Space, _, _, _) => fail ~"compiler thinks this isn't covered",
-          (_, Printable, _, _, _) => fail ~"compiler thinks this isn't covered"
+          (_, _, _, Dollar, '(') => @Comment(DollarOpen, state),
+
+          // ll _$a
+          (StLabel(label_opt), Space, _, _, _) => {
+            @Sep(SeenSpace, @StKeyword(label_opt.map(|s| Label(*s))))
+          }
+          // l_l $a
+          (StLabel(label_opt), Printable, true, _, _) => {
+            @StLabel(match label_opt {
+                Some(chars) => Some(chars + str::from_char(ch)),
+                None => Some(str::from_char(ch))
+            })
+          }
+          // _$a
+          (StLabel(_), _, _, _, _) => {
+            @BadSyntax(fmt!("bad label char [%c]", ch))
+          }
+
+          // ${_
+          (StKeyword(l), _, _, Dollar, '{') => {
+            thunk(&StatementParts{label: l, kw: _open, expr: ~[]/*, pf: None*/});
+            @Sep(NeedSpace, @StLabel(None))
+          }
+          // $}_
+          (StKeyword(l), _, _, Dollar, '}') => {
+            thunk(&StatementParts{label: l, kw: _close, expr: ~[]/*, pf: None*/});
+            @Sep(NeedSpace, @StLabel(None))
+          }
+          // $a_
+          (StKeyword(l), _, _, Dollar, kch) => {
+            match decode_kw(kch) {
+              Some(k) => {
+                @Sep(NeedSpace,
+                     @StExpr(l, k, ~[], None))
+              }
+              None => @BadSyntax(fmt!("Bad keyword: $%c", kch))
+            }
+          }
+          (StKeyword(_), _, _, _, _) => {
+            @BadSyntax(fmt!("expected keyword; got $%c", ch))
+          }
+
+          // ll $a ss _
+          (StExpr(l, kw, syms, tok), Space, _, _, _) => {
+            let syms2 = match tok {
+              Some(chars) => syms + ~[Symbol(copy chars)],
+              _ => syms
+            };
+            @Sep(SeenSpace, @StExpr(l, kw, syms2, None))
+          }
+          // ll $p ss $=_
+          (StExpr(*), _, _, NoDelim, '$') => state,
+          // $* ss_
+          // $* s_
+          (StExpr(l, kw, syms, tok), Printable, _, NoDelim, _) => {
+            @StExpr(l, kw, syms, build_tok(tok, ch))
+          }
+/*
+          // $=_
+          (StExpr(l, kw, expr, tok), _, _, Dollar, '=') => {
+            assert tok.is_none();
+            @Sep(NeedSpace, @StPf(l, kw, expr, Normal, ~[], None))
+          }
+*/
+          // ll $a ss $._
+          (StExpr(l, kw, expr, tok), _, _, Dollar, '.') => {
+            assert tok.is_none();
+            let sp = StatementParts{label: l, kw: kw, expr: expr/*, pf: None*/};
+            thunk(&sp);
+            @Sep(NeedSpace, @StLabel(None))
+          }
+          (StExpr(*), _, _, _, _) => {
+            @BadSyntax(fmt!("bad character in symbol: $%c", ch))
+          }
+
+/*
+          (StPf(l, kw, expr, Normal, labels, tok),
+           Space, _, _, _) => {
+            // factor out build_tokens?
+            let labels2 = match tok {
+              Some(chars) => labels + ~[Label(copy chars)],
+              _ => labels
+            };
+            @Sep(SeenSpace, @StPf(l, kw, expr, Normal, labels2, None))
+          }
+          // ll $p ss $= l_
+          (StPf(l, kw, syms, Normal, labels, tok),
+           Printable, true, NoDelim, _) => {
+            @StPf(l, kw, syms, Normal, labels, build_tok(tok, ch))
+          }
+          // .. $$= ll $._
+          (StPf(l, kw, expr, Normal, labels, tok), _, _, Dollar, '.') => {
+            assert tok.is_none();
+            let sp = StatementParts{
+                label: l, kw: kw, expr: expr,
+                pf: Some(Proof{labels: labels, digits: None})};
+            thunk(&sp);
+            @Sep(NeedSpace, @StLabel(None))
+          }
+*/
+
+          (Comment(DollarOpen, next), Space, _, _, _) => {
+            @Comment(CommentSpace, next)
+          }
+          (Comment(DollarOpen, _), _, _, _, _) => {
+            @BadSyntax(~"$( must be followed by space")
+          }
+          (Comment(CommentSpace, _), _, _, _, '$') => state,
+          (Comment(CommentSpace, next), _, _, Dollar, ')') => {
+            @Sep(NeedSpace, next)
+          }
+          (Comment(CommentSpace, next), Printable, _, _, _) => {
+            @Comment(CommentText, next)
+          }
+          (Comment(CommentText, next), Space, _, _, _) => {
+            @Comment(CommentSpace, next)
+          }
+          (Comment(CommentText, _), Printable, _, _, _) => state,
+
+          (BadSyntax(_), _, _, _, _) => fail ~"BadSyntax doesn't get here",
+
+          _ => fail ~"@@not sure why compiler doesn't think this is covered."
         };
 
-        ch1 = ch;
-        tok = match tok {
-          Some(s) => Some(s + str::from_char(ch)),
-          None => tok
-        };
+        delim = if (ch == '$') { Dollar } else { NoDelim };
 
-        match state {
-            BadSyntax => false,
-            _ => true
+        match *state {
+          BadSyntax(_) => false,
+          _ => true
         }
+/*
+        match (label, kw, expr.len(), pf_opt) {
+          St(None, _c, _, None) => thunk(Constants(move expr)),
+          (None, _v, _, None) => Ok(Variables(move expr)),
+          (None, _d, _, None) => Ok(Disjoint(move expr)),
+          (Some(l), _f, 2, None) => Ok(FloatingHyp(copy l,
+                                                copy expr[0], copy expr[1])),
+          (Some(l), _e, _, 0) => Ok(Antecedent(move l, move expr)),
+          (Some(l), _a, _, 0) => Ok(Axiom(copy l, move expr)),
+          (Some(l), _p, _, _) => Ok(Theorem(copy l, move expr,
+                                            move pf_labels, move pf_digits)),
+
+          (Some(_), _, _, _) => Err(
+              fmt!("unexpected label on %? statement", keyword)),
+          (None, _f, _, _) => Err(
+              ~"too many tokesn in $f statement"),
+          (_, _, 0, _) => Err(
+              fmt!("empty expression in %? statement", keyword)),
+          (_, _, _, _) => Err(
+              fmt!("unexpected proof in %? statement", keyword)),
+        };
+        match sr {
+          Ok(statement) => {
+            thunk(&statement);
+            TSpace
+          }
+          Err(msg) => BadSyntax(msg)
+        }
+    ;
+*/
     };
 
-    match state {
-      TSpace => Ok(()),
+    match *state {
+      Sep(_, @StLabel(None)) => Ok(()),
       // TODO: count lines, show current line
-      _ => Err(fmt!("parse failed after '%c' of %u in %?",
-                    ch1, text.len(), state))
+      _ => Err(fmt!("parse failed in %?", state))
     }
 }
 
+fn decode_kw(kch: char) -> Option<Keyword> {
+    do [('c', _c), ('v', _v),
+        ('f', _f), ('e', _e),
+        ('d', _d),
+        ('a', _a)/*, ('p', _p)*/].find |ea| {
+        match ea {
+          (ltr, _) => ltr == kch
+        }
+    }.map(|nv| match nv { &(_, v) => v})
+}
 
-fn to_str(text: rope::Rope) -> ~str {
-    let mut out = ~"";
-    do rope::loop_leaves(text) |l| {
-        out = str::append(
-            copy out, str::substr(*l.content, l.byte_offset, l.byte_len));
-        true
-    };
-    out
+
+fn build_tok(tok: Option<~str>, ch: char) -> Option<~str> {
+    let sch = str::from_char(ch);
+    Some(match tok {
+        Some(chars) => chars + sch,
+        _ => sch
+    })
 }
 
 
 #[cfg(test)]
 mod test {
-    fn test_axiom(txt: @~str, label: ~str, expr_len: uint) {
+    fn test_axiom(txt: @~str, label: ~str, expr_len: uint, sym: ~str) {
         let result = (do each_statement(*txt) |st| {
             debug!("each statement: %?", st);
-            match *st {
-              Axiom(actual_label, expr) => {
-                assert *actual_label == label;
-                assert expr.len() == expr_len;
-              }
-              _ => fail
-            }
+            assert *st.label.get() == label;
+            assert st.expr.len() == expr_len;
+            assert *st.expr[0] == sym;
         });
         match result {
           Ok(()) => (),
@@ -271,27 +370,37 @@ mod test {
 
     #[test]
     fn test_1_axiom() {
-        test_axiom(@~"axiom.1 $a |- x = x $.", ~"axiom.1", 4)
+        test_axiom(@~"axiom.1 $a |- x = x $.", ~"axiom.1", 4, ~"|-")
     }
 
     #[test]
     fn test_2_axioms() {
         test_axiom(@~"axiom.1 $a |- x = x $. axiom.1 $a |- x = x $.",
-                   ~"axiom.1", 4)
+                   ~"axiom.1", 4, ~"|-")
     }
 
     #[test]
     fn test_comment_0_axioms() {
-        test_axiom(@~"$( hi $)", ~"", 0)
+        test_axiom(@~"$( hi $)", ~"", 0, ~"|-")
     }
 
     #[test]
     fn test_empty_comment() {
-        test_axiom(@~"$( $)", ~"", 0)
+        test_axiom(@~"$( $)", ~"", 0, ~"|-")
     }
 
     #[test]
     fn test_comment_1_axioms() {
-        test_axiom(@~"$( hi $) axiom.1 $a |- x = x $.", ~"axiom.1", 4)
+        test_axiom(@~"$( hi $) axiom.1 $a |- x = x $.", ~"axiom.1", 4, ~"|-")
+    }
+
+    #[test]
+    fn require_space_after_kw() {
+        do each_statement(~"axiom.1 $a|- x = x $.") |st| {
+            debug!("bad statement: %?", st);
+            match *st {
+              _ => fail
+            }
+        };
     }
 }
