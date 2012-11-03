@@ -54,6 +54,8 @@ pub fn each_statement(text: &str,
     -> Result<(), ~str> {
     enum CharClass { Space, Printable, BadChar }
 
+    let ws_char = " \t\r\n\x0A";
+
     enum SepState {
         NeedSpace,
         SeenSpace,
@@ -62,9 +64,10 @@ pub fn each_statement(text: &str,
         CommentText,
     }
 
-    enum PfKind {
-        Normal,
-        /*Compressed*/
+    enum PfPart {
+        Steps,
+        CompressedSteps,
+        CompressedDigits
     }
 
     enum StPart {
@@ -72,7 +75,7 @@ pub fn each_statement(text: &str,
         StExpr(Option<Label>, Keyword,
                ~mut~[Symbol], ~mut ~str),
         StPf(Option<Label>, Keyword, ~[Symbol],
-             PfKind, ~mut~[Label], ~mut ~str),
+             PfPart, ~mut~[Label], ~mut ~str),
 /*
         StPfDigits(Option<Label>, Keyword, ~[Symbol],
                    ~[Label], ~str),
@@ -92,15 +95,42 @@ pub fn each_statement(text: &str,
     let stay = || { @Ok(None) };
     let start_part = || { @StLabelKw(~mut~"") };
 
-    fn build_tok(tok: &mut ~str, ch: char) {
-        str::push_char(tok, ch)
-    }
-    fn build_toklist(toks: &mut ~[~str], tok: &~mut ~str, ch:char) {
-        str::push_char(*tok, ch);
-        toks.push(copy **tok);
-        // there's gotta be a better way
-        while(tok.len() > 0) { str::pop_char(*tok); }
-    }
+    let build_tok = |tok: &mut ~str, ch: char, cclass: CharClass,
+                     check: fn(c: char) -> bool, err_msg: ~str| -> @State
+    {
+        if check(ch) {
+            str::push_char(tok, ch);
+            match cclass {
+              Space => mksp(SeenSpace),
+              _ => stay()
+            }
+        } else {
+            @Err(fmt!("%s: [%c]", err_msg, ch))
+        }
+    };
+
+    let build_toklist = |toks: &mut ~[~str], tok: &~mut ~str, prev_ch: char,
+                         cclass: CharClass,
+                         check: fn(c: char) -> bool, err_msg: ~str| -> @State {
+        if check(prev_ch) {
+            match cclass {
+              Space => {
+                str::push_char(*tok, prev_ch);
+                toks.push(copy **tok);
+                // @@@there's gotta be a better way...
+                while(tok.len() > 0) { str::pop_char(*tok); }
+                mksp(SeenSpace)
+              }
+              _ => {
+                str::push_char(*tok, prev_ch);
+                stay()
+              }
+            }
+        } else {
+            @Err(fmt!("%s: [%c]", err_msg, prev_ch))
+        }
+    };
+
     let finish = |tok: &~mut~str| -> Option<~str> {
         if (tok.len() > 0) { Some(tok.to_unique()) } else { None }
     };
@@ -111,7 +141,7 @@ pub fn each_statement(text: &str,
 
     do text.all() |ch| {
         let cclass =
-            if(" \t\r\n\x0A".contains_char(ch)) { Space }
+            if(ws_char.contains_char(ch)) { Space }
             else if (ch > '\u007F' || ch < ' ') { BadChar }
             else { Printable };
 
@@ -144,9 +174,6 @@ pub fn each_statement(text: &str,
                 (_, BadChar, _, _) => @Err(fmt!("bad char: %c", ch)),
                 (_, _, '$', '(') => mksp(DollarOpen),
 
-                // $_
-                // ll $_
-                (@StLabelKw(*), _, _, '$') => copy state,
                 // ${_
                 (@StLabelKw(l), _, '$', '{') => {
                   thunk(&finish(&l), _open, &[], &None);
@@ -168,36 +195,17 @@ pub fn each_statement(text: &str,
                     None => @Err(fmt!("Bad keyword: [$%c]", kch))
                   }
                 }
-                // ll _$a
-                (@StLabelKw(l), Space, _, _) => {
-                  match is_label(prev_ch) {
-                    true => { build_tok(l, prev_ch); mksp(SeenSpace) }
-                    _ => @Err(fmt!("bad label char [%c]", prev_ch))
-                  }
-                }
                 // l_l $a
-                (@StLabelKw(l), Printable, _, _) => {
-                  match is_label(prev_ch) {
-                    true => { build_tok(l, prev_ch); stay() }
-                    _ => @Err(fmt!("bad label char [%c]", prev_ch))
-                  }
+                // ll_ $a
+                (@StLabelKw(l), _, _, _) => {
+                  build_tok(l, prev_ch, cclass, is_label, ~"bad label char")
                 }
 
-                // ll $a ss _
-                (@StExpr(*), Space, '$', _) => {
-                  @Err(~"$ followed by space in Expr")
-                }
-                (@StExpr(_, _, syms, tok), Space, _, _) => {
-                  build_toklist(syms, &tok, prev_ch);
-                  mksp(SeenSpace)
-                }
-                // ll $p ss $_
-                (@StExpr(*), _, _, '$') => state,
                 // ll $p ss $=_
                 (@StExpr(l, kw, expr, tok), _, '$', '=') => {
                   assert tok.len() == 0;
                   part = @StPf(copy l, kw, copy *expr,
-                               Normal, ~mut~[], ~mut~"");
+                               Steps, ~mut~[], ~mut~"");
                   mksp(NeedSpace)
                 }
                 // ll $a ss $._
@@ -208,47 +216,68 @@ pub fn each_statement(text: &str,
                   part = start_part();
                   mksp(NeedSpace)
                 }
-                // $* ss_
-                // $* s_
-                (@StExpr(_, _, _, tok), Printable, _, _) => {
-                    build_tok(tok, prev_ch);
-                    stay()
+                // $* _s
+                // $* s_s
+                // $* ss _
+                (@StExpr(_, _, syms, tok), _, _, _) => {
+                  build_toklist(syms, &tok, prev_ch, cclass,
+                                |ch| ch != '$', ~"bad symbol char")
                 }
 
-                // ll $p ss $= _
-                // ll $p ss $= l _
-                (@StPf(_, _, _, Normal, labels, tok),
-                 Space, _, _) => {
-                  // TODO: integrate is_label into build_tok, build_toklist
-                  match is_label(prev_ch) {
-                    true => {
-                      build_toklist(labels, &tok, prev_ch);
+                // ll $p ss $= ( _      for emacs: )
+                (@StPf(l, kw, expr, Steps, labels, tok), Space, '(', _) => {
+                  assert tok.len() == 0;
+                  if (labels.len() == 0) {
+                      part = @StPf(copy l, kw, copy expr,
+                                   CompressedSteps, copy labels, copy tok);
                       mksp(SeenSpace)
-                    }
-                    false => @Err(fmt!("bad label char in proof: [%c]",
-                                       prev_ch))
+                  } else {
+                      @Err(~"misplaced (")
                   }
                 }
-                // ll $p ss $= l $_
-                (@StPf(_, _, _, Normal, _, _), _, _, '$') => stay(),
-                // .. $$= ll $._
-                (@StPf(l, kw, expr, Normal, labels, tok),
-                 _, '$', '.') => {
+
+                // ll $p ss $= ( xx )_
+                (@StPf(l, kw, expr, CompressedSteps, labels, tok),
+                 Space, ')', _) => {
                   assert tok.len() == 0;
+                  part = @StPf(copy l, kw, copy expr,
+                               CompressedDigits, copy labels, copy tok);
+                  mksp(SeenSpace)
+                }
+
+                // .. $$= ll $._
+                (@StPf(l, kw, expr, pp, labels, tok),
+                 _, '$', '.') => {
                   let steps = copy *labels;
-                  thunk(&l, kw, expr,
-                        &Some(FullProof(steps)));
+                  match pp {
+                    Steps => {
+                      assert tok.len() == 0;
+                      thunk(&l, kw, expr,
+                            &Some(FullProof(steps)));
+                    }
+                    _ => {
+                      let digits = (copy finish(&tok)).get_default(~"");
+                      thunk(&l, kw, expr,
+                            &Some(CompressedProof(steps, digits)));
+                    }
+                  }
                   part = start_part();
                   mksp(NeedSpace)
                 }
-                // ll $p ss $= l_
-                (@StPf(_, _, _, Normal, _, tok), _, _, _) => {
-                  match is_label(prev_ch) {
-                    true => {
-                      build_tok(tok, prev_ch);
-                      stay()
+
+                // ll $p ss $= _l
+                // ll $p ss $= l_l
+                // ll $p ss $= ll_
+                (@StPf(_, _, _, pp, labels, tok), _, _, _) => {
+                  match pp {
+                    CompressedDigits => {
+                      build_tok(tok, prev_ch, cclass,
+                                (|ch| ((ch >= 'A' && ch <= 'Z')
+                                       || ws_char.contains_char(ch))),
+                                ~"bad compressed proof digit")
                     }
-                    _ => @Err(fmt!("bad label char in proof: %c", prev_ch))
+                    _ => build_toklist(labels, &tok, prev_ch, cclass,
+                                       is_label, ~"bad label char")
                   }
                 }
               }
